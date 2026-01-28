@@ -76,6 +76,13 @@ function useAuth() {
 // ==================== COMPONENTS ====================
 
 function Header({ user, onLogout, onShowWallet, onShowPortfolio, onShowProfile, onShowAdmin, onShowBotAdmin, onShowLogin }) {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const handleMobileAction = (action) => {
+    setMobileMenuOpen(false);
+    action();
+  };
+
   return (
     <header className="header">
       <div className="header-left">
@@ -101,11 +108,43 @@ function Header({ user, onLogout, onShowWallet, onShowPortfolio, onShowProfile, 
               </>
             )}
             <button className="btn btn-small btn-outline" onClick={onLogout}>Logout</button>
+            {/* Mobile Menu Button */}
+            <button 
+              className="mobile-menu-btn" 
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-label="Menu"
+            >
+              {mobileMenuOpen ? '✕' : '☰'}
+            </button>
           </>
         ) : (
           <button className="btn btn-small btn-login" onClick={onShowLogin}>Login to trade ⚡</button>
         )}
       </div>
+      {/* Mobile Menu Dropdown */}
+      {user && (
+        <div className={`header-actions-mobile ${mobileMenuOpen ? 'open' : ''}`}>
+          <button className="btn btn-portfolio" onClick={() => handleMobileAction(onShowPortfolio)}>
+            📊 Portfolio
+          </button>
+          <button className="btn btn-profile" onClick={() => handleMobileAction(onShowProfile)}>
+            👤 Profile
+          </button>
+          {user.is_admin === 1 && (
+            <>
+              <button className="btn btn-bot" onClick={() => handleMobileAction(onShowBotAdmin)}>
+                🤖 Market Maker Bot
+              </button>
+              <button className="btn btn-outline" onClick={() => handleMobileAction(onShowAdmin)}>
+                🔐 Admin Panel
+              </button>
+            </>
+          )}
+          <button className="btn btn-outline" onClick={() => handleMobileAction(onLogout)}>
+            Logout
+          </button>
+        </div>
+      )}
     </header>
   );
 }
