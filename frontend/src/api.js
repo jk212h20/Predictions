@@ -1,71 +1,107 @@
-const API_BASE = 'http://localhost:3001/api';
+// API base URL - uses relative path in production, localhost in dev
+const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:3001/api';
 
-// Get token from localStorage
-const getToken = () => localStorage.getItem('token');
+const getHeaders = () => {
+  const headers = { 'Content-Type': 'application/json' };
+  const token = localStorage.getItem('token');
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
+};
 
-// API helper
-async function api(endpoint, options = {}) {
-  const token = getToken();
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(token && { Authorization: `Bearer ${token}` }),
-    ...options.headers,
-  };
-
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
-
-  const data = await response.json();
-  
-  if (!response.ok) {
-    throw new Error(data.error || 'API Error');
-  }
-  
+const handleResponse = async (res) => {
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Request failed');
   return data;
-}
+};
 
 // Auth
-export const demoLogin = (email, username) => 
-  api('/auth/demo-login', { method: 'POST', body: JSON.stringify({ email, username }) });
+export const demoLogin = (email, username) =>
+  fetch(`${API_BASE}/auth/demo-login`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ email, username }),
+  }).then(handleResponse);
 
-// User
-export const getUser = () => api('/user/me');
-export const getBalance = () => api('/user/balance');
-export const getPositions = () => api('/user/positions');
-export const getOrders = () => api('/user/orders');
+export const getUser = () =>
+  fetch(`${API_BASE}/user/me`, { headers: getHeaders() }).then(handleResponse);
 
-// Wallet
-export const createDeposit = (amount_sats) => 
-  api('/wallet/deposit', { method: 'POST', body: JSON.stringify({ amount_sats }) });
-export const checkDeposit = (payment_hash) => 
-  api('/wallet/check-deposit', { method: 'POST', body: JSON.stringify({ payment_hash }) });
-export const simulatePayment = (payment_hash) => 
-  api('/wallet/simulate-payment', { method: 'POST', body: JSON.stringify({ payment_hash }) });
-export const withdraw = (payment_request, amount_sats) => 
-  api('/wallet/withdraw', { method: 'POST', body: JSON.stringify({ payment_request, amount_sats }) });
+export const getBalance = () =>
+  fetch(`${API_BASE}/user/balance`, { headers: getHeaders() }).then(handleResponse);
 
 // Markets
-export const getGrandmasters = () => api('/grandmasters');
-export const getEventMarket = () => api('/markets/event');
-export const getMarket = (id) => api(`/markets/${id}`);
+export const getGrandmasters = () =>
+  fetch(`${API_BASE}/grandmasters`).then(handleResponse);
+
+export const getEventMarket = () =>
+  fetch(`${API_BASE}/markets/event`).then(handleResponse);
+
+export const getMarket = (id) =>
+  fetch(`${API_BASE}/markets/${id}`).then(handleResponse);
 
 // Orders
-export const placeOrder = (market_id, side, price_cents, amount_sats) => 
-  api('/orders', { method: 'POST', body: JSON.stringify({ market_id, side, price_cents, amount_sats }) });
-export const cancelOrder = (id) => 
-  api(`/orders/${id}`, { method: 'DELETE' });
+export const placeOrder = (market_id, side, price_cents, amount_sats) =>
+  fetch(`${API_BASE}/orders`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ market_id, side, price_cents, amount_sats }),
+  }).then(handleResponse);
+
+export const cancelOrder = (id) =>
+  fetch(`${API_BASE}/orders/${id}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  }).then(handleResponse);
+
+// Wallet
+export const createDeposit = (amount_sats) =>
+  fetch(`${API_BASE}/wallet/deposit`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ amount_sats }),
+  }).then(handleResponse);
+
+export const checkDeposit = (payment_hash) =>
+  fetch(`${API_BASE}/wallet/check-deposit`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ payment_hash }),
+  }).then(handleResponse);
+
+export const simulatePayment = (payment_hash) =>
+  fetch(`${API_BASE}/wallet/simulate-payment`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ payment_hash }),
+  }).then(handleResponse);
+
+export const withdraw = (payment_request, amount_sats) =>
+  fetch(`${API_BASE}/wallet/withdraw`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ payment_request, amount_sats }),
+  }).then(handleResponse);
 
 // Admin
-export const getAdminMarkets = () => api('/admin/markets');
-export const initiateResolution = (market_id, resolution, notes) => 
-  api('/admin/resolve/initiate', { method: 'POST', body: JSON.stringify({ market_id, resolution, notes }) });
-export const confirmResolution = (market_id, emergency_code) => 
-  api('/admin/resolve/confirm', { method: 'POST', body: JSON.stringify({ market_id, emergency_code }) });
-export const cancelResolution = (market_id) => 
-  api('/admin/resolve/cancel', { method: 'POST', body: JSON.stringify({ market_id }) });
-export const addGrandmaster = (data) => 
-  api('/admin/grandmasters', { method: 'POST', body: JSON.stringify(data) });
+export const getAdminMarkets = () =>
+  fetch(`${API_BASE}/admin/markets`, { headers: getHeaders() }).then(handleResponse);
 
-export default api;
+export const initiateResolution = (market_id, resolution, notes) =>
+  fetch(`${API_BASE}/admin/resolve/initiate`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ market_id, resolution, notes }),
+  }).then(handleResponse);
+
+export const confirmResolution = (market_id, emergency_code) =>
+  fetch(`${API_BASE}/admin/resolve/confirm`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ market_id, emergency_code }),
+  }).then(handleResponse);
+
+export const cancelResolution = (market_id) =>
+  fetch(`${API_BASE}/admin/resolve/cancel`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ market_id }),
+  }).then(handleResponse);
