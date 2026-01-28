@@ -1,7 +1,18 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-const db = new Database(path.join(__dirname, 'predictions.db'));
+// Use DATABASE_PATH env var for Railway volume, fallback to local for dev
+const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'predictions.db');
+
+// Ensure the directory exists (for Railway volume mount)
+const dbDir = path.dirname(dbPath);
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
+
+console.log(`Database path: ${dbPath}`);
+const db = new Database(dbPath);
 
 // Enable WAL mode for better concurrency
 db.pragma('journal_mode = WAL');
