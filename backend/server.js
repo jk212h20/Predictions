@@ -1314,6 +1314,16 @@ app.post('/api/admin/bot/deploy-all', authMiddleware, adminMiddleware, (req, res
   }
 });
 
+// Get deployment preview (shows exactly what will be deployed)
+app.get('/api/admin/bot/deployment-preview', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const preview = bot.getDeploymentPreview(req.user.id);
+    res.json(preview);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get deployment preview', message: err.message });
+  }
+});
+
 // Withdraw all bot orders (uses logged-in user's account)
 app.post('/api/admin/bot/withdraw-all', authMiddleware, adminMiddleware, (req, res) => {
   try {

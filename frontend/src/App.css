@@ -2378,6 +2378,187 @@ label {
   border: 1px solid var(--border);
 }
 
+/* ==================== BOT DEPLOYMENT PREVIEW ==================== */
+.bot-deploy {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.deploy-info {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  margin-bottom: 0.5rem;
+}
+
+.loading-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: var(--text-muted);
+}
+
+.empty-preview {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-muted);
+}
+
+.deploy-summary {
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+}
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  font-size: 0.9375rem;
+}
+
+.summary-row.highlight {
+  border-top: 1px solid var(--border);
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  font-weight: 600;
+}
+
+.summary-row value.positive {
+  color: var(--yes-color);
+}
+
+.summary-row value.error {
+  color: var(--no-color);
+}
+
+.warning-banner {
+  background: rgba(248, 81, 73, 0.15);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 0.875rem 1rem;
+  margin-top: 1rem;
+  color: var(--no-color);
+  font-weight: 500;
+  font-size: 0.875rem;
+}
+
+.deploy-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.deploy-details {
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.deploy-details summary {
+  padding: 1rem 1.25rem;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--text);
+  transition: background 0.2s ease;
+}
+
+.deploy-details summary:hover {
+  background: var(--bg-card-hover);
+}
+
+.deploy-details[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.markets-breakdown {
+  padding: 0.75rem;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.market-preview {
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--border);
+}
+
+.market-preview.disabled {
+  opacity: 0.5;
+}
+
+.market-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.market-header .gm-name {
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.market-header .gm-rating {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.market-orders {
+  margin-top: 0.5rem;
+}
+
+.market-orders .mini-table {
+  font-size: 0.75rem;
+}
+
+.total-row {
+  background: var(--bg-input);
+  font-weight: 600;
+}
+
+.no-orders {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
+.deploy-config {
+  background: rgba(247, 147, 26, 0.1);
+  border: 1px solid rgba(247, 147, 26, 0.3);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+}
+
+.deploy-config h4 {
+  color: var(--accent);
+  margin-bottom: 0.75rem;
+  font-size: 0.9375rem;
+}
+
+.config-summary {
+  font-size: 0.875rem;
+  color: var(--text);
+}
+
+.config-summary div {
+  margin-bottom: 0.25rem;
+}
+
+.config-summary strong.active {
+  color: var(--yes-color);
+}
+
+.config-summary strong.inactive {
+  color: var(--text-muted);
+}
+
 /* ==================== INTRO BANNER / WHAT'S THE POINT ==================== */
 .intro-banner {
   display: flex;

@@ -294,6 +294,9 @@ export const deployAllOrders = () =>
     headers: getHeaders(),
   }).then(handleResponse);
 
+export const getDeploymentPreview = () =>
+  fetch(`${API_BASE}/admin/bot/deployment-preview`, { headers: getHeaders() }).then(handleResponse);
+
 export const withdrawAllOrders = () =>
   fetch(`${API_BASE}/admin/bot/withdraw-all`, {
     method: 'POST',

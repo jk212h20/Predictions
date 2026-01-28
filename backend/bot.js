@@ -630,6 +630,9 @@ function setMarketOverride(marketId, overrideType, options = {}) {
 
 /**
  * Get effective curve for a specific market (applying overrides and global multiplier)
+ * 
+ * NEW LOGIC: Uses total_liquidity × market_weight × shape_weight to calculate amounts
+ * The curve shape is just proportions, not absolute amounts
  */
 function getEffectiveCurve(marketId, curveType = 'buy') {
   const config = getConfig();
@@ -643,13 +646,23 @@ function getEffectiveCurve(marketId, curveType = 'buy') {
     return null;
   }
   
-  // Get base curve
-  let baseCurve;
+  // Get the shape (normalized proportions that sum to 1.0)
+  let shape;
   if (override?.override_type === 'replace' && override.custom_curve) {
-    baseCurve = JSON.parse(override.custom_curve);
+    shape = JSON.parse(override.custom_curve);
   } else {
-    const defaultCurve = curveType === 'buy' ? getBuyCurve(market.type) : getSellCurve(market.type);
-    baseCurve = defaultCurve.price_points;
+    // Get default shape from library
+    const defaultShape = getDefaultShape();
+    shape = defaultShape.normalized_points;
+  }
+  
+  // Get market weight (what fraction of total liquidity goes to this market)
+  const weightRecord = getMarketWeight(marketId);
+  const marketWeight = weightRecord?.weight || 0;
+  
+  if (marketWeight === 0) {
+    // No weight assigned - need to initialize weights
+    return null;
   }
   
   // Apply multipliers
@@ -660,10 +673,19 @@ function getEffectiveCurve(marketId, curveType = 'buy') {
   const exposure = getExposure();
   const pullbackRatio = calculatePullbackRatio(exposure.total_at_risk, config.max_acceptable_loss);
   
-  return baseCurve.map(point => ({
-    price: point.price,
-    amount: Math.floor(point.amount * effectiveMultiplier * pullbackRatio)
-  })).filter(point => point.amount > 0);
+  // Calculate budget for this market
+  // total_liquidity × market_weight × global_multiplier × market_multiplier × pullback_ratio
+  const marketBudget = config.total_liquidity * marketWeight * effectiveMultiplier * pullbackRatio;
+  
+  // Distribute budget according to shape weights
+  return shape.map(point => {
+    // Each point has a price and a weight (proportion)
+    const amount = Math.floor(marketBudget * point.weight);
+    return {
+      price: point.price,
+      amount: amount
+    };
+  }).filter(point => point.amount >= 100); // Min 100 sats per order
 }
 
 // ==================== EXPOSURE & RISK TRACKING ====================
@@ -1104,6 +1126,132 @@ function atomicPullback(filledAmount, marketId) {
   };
 }
 
+// ==================== DEPLOYMENT PREVIEW ====================
+
+/**
+ * Get a preview of what would be deployed without actually deploying
+ * This shows exactly what orders will be placed for each market
+ * @param {string} userId - User ID to check balance against
+ */
+function getDeploymentPreview(userId) {
+  const config = getConfig();
+  
+  if (!userId) {
+    return { success: false, error: 'User ID required' };
+  }
+  
+  const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
+  if (!user) {
+    return { success: false, error: 'User not found' };
+  }
+  
+  // Get all attendance markets
+  const markets = db.prepare(`
+    SELECT m.id, m.title, g.name as grandmaster_name, g.fide_rating
+    FROM markets m
+    LEFT JOIN grandmasters g ON m.grandmaster_id = g.id
+    WHERE m.type = 'attendance' AND m.status = 'open'
+    ORDER BY g.fide_rating DESC
+  `).all();
+  
+  // Get current orders that would be cancelled (and refunded)
+  const existingOrders = db.prepare(`
+    SELECT o.*, m.title as market_title
+    FROM orders o
+    JOIN markets m ON o.market_id = m.id
+    WHERE o.user_id = ? AND o.status IN ('open', 'partial')
+  `).all(userId);
+  
+  let totalRefund = 0;
+  for (const order of existingOrders) {
+    const remaining = order.amount_sats - order.filled_sats;
+    const refund = order.side === 'yes'
+      ? Math.ceil(remaining * order.price_cents / 100)
+      : Math.ceil(remaining * (100 - order.price_cents) / 100);
+    totalRefund += refund;
+  }
+  
+  // Calculate effective balance (current + refund from cancelled orders)
+  const effectiveBalance = user.balance_sats + totalRefund;
+  
+  // Calculate what would be deployed to each market
+  const marketPreviews = [];
+  let totalCost = 0;
+  let totalOrders = 0;
+  
+  for (const market of markets) {
+    const effectiveCurve = getEffectiveCurve(market.id, 'buy');
+    
+    if (!effectiveCurve || effectiveCurve.length === 0) {
+      marketPreviews.push({
+        market_id: market.id,
+        grandmaster_name: market.grandmaster_name,
+        fide_rating: market.fide_rating,
+        disabled: true,
+        orders: [],
+        total_amount: 0,
+        total_cost: 0
+      });
+      continue;
+    }
+    
+    // Calculate orders for this market
+    const orders = [];
+    let marketCost = 0;
+    let marketAmount = 0;
+    
+    for (const point of effectiveCurve) {
+      if (point.amount < 100) continue;
+      
+      // Cost for NO side = (100 - price) * amount / 100
+      const cost = Math.ceil(point.amount * (100 - point.price) / 100);
+      
+      orders.push({
+        price: point.price,
+        amount: point.amount,
+        cost: cost
+      });
+      
+      marketCost += cost;
+      marketAmount += point.amount;
+    }
+    
+    marketPreviews.push({
+      market_id: market.id,
+      grandmaster_name: market.grandmaster_name,
+      fide_rating: market.fide_rating,
+      disabled: false,
+      orders: orders,
+      total_amount: marketAmount,
+      total_cost: marketCost
+    });
+    
+    totalCost += marketCost;
+    totalOrders += orders.length;
+  }
+  
+  // Check if user has sufficient balance
+  const hasBalance = effectiveBalance >= totalCost;
+  
+  return {
+    success: true,
+    user_balance: user.balance_sats,
+    existing_orders_refund: totalRefund,
+    effective_balance: effectiveBalance,
+    total_cost: totalCost,
+    total_orders: totalOrders,
+    total_markets: marketPreviews.filter(m => !m.disabled).length,
+    has_sufficient_balance: hasBalance,
+    shortfall: hasBalance ? 0 : totalCost - effectiveBalance,
+    markets: marketPreviews,
+    config: {
+      total_liquidity: config.total_liquidity,
+      global_multiplier: config.global_multiplier,
+      is_active: !!config.is_active
+    }
+  };
+}
+
 // ==================== ANALYTICS ====================
 
 /**
@@ -1315,5 +1463,8 @@ module.exports = {
   // Analytics
   getStats,
   calculateWorstCase,
-  getActivityLog
+  getActivityLog,
+  
+  // Deployment Preview
+  getDeploymentPreview
 };

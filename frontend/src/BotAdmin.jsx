@@ -40,6 +40,13 @@ export default function BotAdmin({ onClose }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deploying, setDeploying] = useState(false);
+  
+  // Deployment preview state
+  const [deploymentPreview, setDeploymentPreview] = useState(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  
+  // User balance for max_loss validation
+  const [userBalance, setUserBalance] = useState(0);
 
   // Config form state
   const [configForm, setConfigForm] = useState({
@@ -203,6 +210,19 @@ export default function BotAdmin({ onClose }) {
     }
   };
 
+  // Load deployment preview
+  const loadDeploymentPreview = async () => {
+    setLoadingPreview(true);
+    try {
+      const preview = await api.getDeploymentPreview();
+      setDeploymentPreview(preview);
+    } catch (err) {
+      console.error('Failed to load deployment preview:', err);
+      alert('Failed to load deployment preview: ' + err.message);
+    }
+    setLoadingPreview(false);
+  };
+
   // Calculate curve totals
   const curveTotalAmount = curvePoints.reduce((sum, p) => sum + p.amount, 0);
   const curveTotalCost = curvePoints.reduce((sum, p) => sum + Math.ceil(p.amount * (100 - p.price) / 100), 0);
@@ -278,6 +298,12 @@ export default function BotAdmin({ onClose }) {
         <div className="bot-tabs">
           <button className={activeTab === 'overview' ? 'active' : ''} onClick={() => setActiveTab('overview')}>
             Overview
+          </button>
+          <button className={activeTab === 'deploy' ? 'active' : ''} onClick={() => {
+            setActiveTab('deploy');
+            loadDeploymentPreview();
+          }}>
+            🚀 Deploy
           </button>
           <button className={activeTab === 'curve' ? 'active' : ''} onClick={() => setActiveTab('curve')}>
             Buy Curve
@@ -772,6 +798,145 @@ export default function BotAdmin({ onClose }) {
                   {saving ? 'Saving...' : '💾 Save Configuration'}
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* DEPLOY TAB */}
+          {activeTab === 'deploy' && (
+            <div className="bot-deploy">
+              <h3>🚀 Deployment Preview</h3>
+              <p className="deploy-info">
+                This shows exactly what orders will be deployed based on your current settings.
+                The curve shape is distributed across all markets according to their weights and your total liquidity budget.
+              </p>
+              
+              {loadingPreview ? (
+                <div className="loading-preview">Loading preview...</div>
+              ) : deploymentPreview ? (
+                <>
+                  {/* SUMMARY */}
+                  <div className="deploy-summary">
+                    <div className="summary-row">
+                      <label>Your Balance:</label>
+                      <value>{formatSats(deploymentPreview.user_balance)} sats</value>
+                    </div>
+                    {deploymentPreview.existing_orders_refund > 0 && (
+                      <div className="summary-row">
+                        <label>+ Existing Orders Refund:</label>
+                        <value className="positive">+{formatSats(deploymentPreview.existing_orders_refund)} sats</value>
+                      </div>
+                    )}
+                    <div className="summary-row highlight">
+                      <label>Effective Balance:</label>
+                      <value>{formatSats(deploymentPreview.effective_balance)} sats</value>
+                    </div>
+                    <div className="summary-row">
+                      <label>Total Deployment Cost:</label>
+                      <value className={deploymentPreview.has_sufficient_balance ? '' : 'error'}>
+                        {formatSats(deploymentPreview.total_cost)} sats
+                      </value>
+                    </div>
+                    <div className="summary-row">
+                      <label>Total Orders:</label>
+                      <value>{deploymentPreview.total_orders} across {deploymentPreview.total_markets} markets</value>
+                    </div>
+                    
+                    {!deploymentPreview.has_sufficient_balance && (
+                      <div className="warning-banner">
+                        ⚠️ Insufficient balance! You need {formatSats(deploymentPreview.shortfall)} more sats.
+                      </div>
+                    )}
+                    
+                    {deploymentPreview.total_markets === 0 && (
+                      <div className="warning-banner">
+                        ⚠️ No markets with assigned weights. Click "Initialize Weights" in Configuration first.
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* DEPLOY BUTTON */}
+                  <div className="deploy-actions">
+                    <button 
+                      className="btn btn-primary btn-large"
+                      onClick={handleDeployAll}
+                      disabled={deploying || !configForm.is_active || !deploymentPreview.has_sufficient_balance || deploymentPreview.total_orders === 0}
+                    >
+                      {deploying ? 'Deploying...' : `🚀 Deploy ${deploymentPreview.total_orders} Orders to ${deploymentPreview.total_markets} Markets`}
+                    </button>
+                    <button 
+                      className="btn btn-outline"
+                      onClick={loadDeploymentPreview}
+                    >
+                      🔄 Refresh Preview
+                    </button>
+                  </div>
+                  
+                  {/* MARKET-BY-MARKET BREAKDOWN */}
+                  <details className="deploy-details" open>
+                    <summary>📋 Market-by-Market Breakdown ({deploymentPreview.markets?.filter(m => !m.disabled).length} enabled)</summary>
+                    <div className="markets-breakdown">
+                      {deploymentPreview.markets?.map((market, i) => (
+                        <div key={market.market_id} className={`market-preview ${market.disabled ? 'disabled' : ''}`}>
+                          <div className="market-header">
+                            <span className="gm-name">{market.grandmaster_name || 'Unknown'}</span>
+                            <span className="gm-rating">({market.fide_rating})</span>
+                            {market.disabled && <span className="status-badge disabled">Disabled</span>}
+                          </div>
+                          {!market.disabled && market.orders.length > 0 && (
+                            <div className="market-orders">
+                              <table className="mini-table">
+                                <thead>
+                                  <tr>
+                                    <th>Price</th>
+                                    <th>Amount</th>
+                                    <th>Cost</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {market.orders.map((order, j) => (
+                                    <tr key={j}>
+                                      <td>{order.price}%</td>
+                                      <td>{formatSats(order.amount)}</td>
+                                      <td>{formatSats(order.cost)}</td>
+                                    </tr>
+                                  ))}
+                                  <tr className="total-row">
+                                    <td><strong>Total</strong></td>
+                                    <td><strong>{formatSats(market.total_amount)}</strong></td>
+                                    <td><strong>{formatSats(market.total_cost)}</strong></td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                          {!market.disabled && market.orders.length === 0 && (
+                            <div className="no-orders">No orders (weight too low or no shape)</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                  
+                  {/* CONFIG INFO */}
+                  <div className="deploy-config">
+                    <h4>Current Configuration</h4>
+                    <div className="config-summary">
+                      <div>Total Liquidity Budget: <strong>{formatSats(deploymentPreview.config?.total_liquidity)} sats</strong></div>
+                      <div>Global Multiplier: <strong>{deploymentPreview.config?.global_multiplier}x</strong></div>
+                      <div>Bot Status: <strong className={deploymentPreview.config?.is_active ? 'active' : 'inactive'}>
+                        {deploymentPreview.config?.is_active ? 'Active' : 'Inactive'}
+                      </strong></div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="empty-preview">
+                  <p>Click the button below to load the deployment preview.</p>
+                  <button className="btn btn-primary" onClick={loadDeploymentPreview}>
+                    Load Preview
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
