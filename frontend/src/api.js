@@ -413,3 +413,28 @@ export const batchSetOdds = (odds) =>
     headers: getHeaders(),
     body: JSON.stringify({ odds }),
   }).then(handleResponse);
+
+// ==================== TIER MANAGEMENT ====================
+
+// Get tier summary (all tiers with budget percentages)
+export const getTierSummary = () =>
+  fetch(`${API_BASE}/admin/bot/tiers`, { headers: getHeaders() }).then(handleResponse);
+
+// Get markets in a specific tier
+export const getTierMarkets = (tier) =>
+  fetch(`${API_BASE}/admin/bot/tiers/${encodeURIComponent(tier)}/markets`, { headers: getHeaders() }).then(handleResponse);
+
+// Set budget percentage for a tier (auto-rebalances other tiers)
+export const setTierBudget = (tier, budget_percent) =>
+  fetch(`${API_BASE}/admin/bot/tiers/${encodeURIComponent(tier)}/budget`, {
+    method: 'PUT',
+    headers: getHeaders(),
+    body: JSON.stringify({ budget_percent }),
+  }).then(handleResponse);
+
+// Initialize weights from likelihood scores
+export const initializeFromScores = () =>
+  fetch(`${API_BASE}/admin/bot/tiers/initialize-from-scores`, {
+    method: 'POST',
+    headers: getHeaders(),
+  }).then(handleResponse);

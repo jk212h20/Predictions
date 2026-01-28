@@ -72,6 +72,12 @@ export default function BotAdmin({ onClose }) {
   
   // Saved custom curves
   const [savedCurves, setSavedCurves] = useState([]);
+  
+  // Tier management state
+  const [tiers, setTiers] = useState([]);
+  const [loadingTiers, setLoadingTiers] = useState(false);
+  const [expandedTier, setExpandedTier] = useState(null);
+  const [tierMarkets, setTierMarkets] = useState({});
 
   useEffect(() => {
     loadAllData();
@@ -237,6 +243,54 @@ export default function BotAdmin({ onClose }) {
     setLoadingPreview(false);
   };
 
+  // Load tier summary
+  const loadTiers = async () => {
+    setLoadingTiers(true);
+    try {
+      const tiersData = await api.getTierSummary();
+      setTiers(tiersData || []);
+    } catch (err) {
+      console.error('Failed to load tiers:', err);
+    }
+    setLoadingTiers(false);
+  };
+
+  // Load markets for a specific tier
+  const loadTierMarkets = async (tier) => {
+    try {
+      const markets = await api.getTierMarkets(tier);
+      setTierMarkets(prev => ({ ...prev, [tier]: markets }));
+    } catch (err) {
+      console.error(`Failed to load tier ${tier} markets:`, err);
+    }
+  };
+
+  // Handle tier budget change
+  const handleTierBudgetChange = async (tier, newBudget) => {
+    setSaving(true);
+    try {
+      const result = await api.setTierBudget(tier, newBudget);
+      setTiers(result.tiers || []);
+    } catch (err) {
+      alert('Failed to update tier budget: ' + err.message);
+    }
+    setSaving(false);
+  };
+
+  // Initialize weights from likelihood scores
+  const handleInitializeFromScores = async () => {
+    if (!confirm('Initialize all market weights based on likelihood scores? This will reset current weights.')) return;
+    setSaving(true);
+    try {
+      const result = await api.initializeFromScores();
+      setTiers(result.tiers || []);
+      alert('Weights initialized from likelihood scores!');
+    } catch (err) {
+      alert('Failed to initialize from scores: ' + err.message);
+    }
+    setSaving(false);
+  };
+
   // Calculate curve totals
   const curveTotalAmount = curvePoints.reduce((sum, p) => sum + p.amount, 0);
   const curveTotalCost = curvePoints.reduce((sum, p) => sum + Math.ceil(p.amount * (100 - p.price) / 100), 0);
@@ -318,6 +372,12 @@ export default function BotAdmin({ onClose }) {
             loadDeploymentPreview();
           }}>
             🚀 Deploy
+          </button>
+          <button className={activeTab === 'tiers' ? 'active' : ''} onClick={() => {
+            setActiveTab('tiers');
+            loadTiers();
+          }}>
+            🎯 Tiers
           </button>
           <button className={activeTab === 'curve' ? 'active' : ''} onClick={() => setActiveTab('curve')}>
             Buy Curve
@@ -1064,6 +1124,214 @@ export default function BotAdmin({ onClose }) {
                   )}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* TIERS TAB */}
+          {activeTab === 'tiers' && (
+            <div className="bot-tiers">
+              <div className="tiers-header">
+                <h3>🎯 Player Tier Budget Allocation</h3>
+                <p className="tiers-info">
+                  Adjust budget allocation by tier. Players are grouped by likelihood score. 
+                  Changing one tier auto-rebalances others to keep total at 100%.
+                </p>
+                <div className="tier-actions">
+                  <button 
+                    className="btn btn-primary"
+                    onClick={handleInitializeFromScores}
+                    disabled={saving}
+                  >
+                    {saving ? 'Initializing...' : '📊 Initialize from Scores'}
+                  </button>
+                  <button 
+                    className="btn btn-outline"
+                    onClick={loadTiers}
+                    disabled={loadingTiers}
+                  >
+                    🔄 Refresh
+                  </button>
+                </div>
+              </div>
+
+              {loadingTiers ? (
+                <div className="loading-tiers">Loading tier data...</div>
+              ) : tiers.length === 0 ? (
+                <div className="empty-tiers">
+                  <p>No tier data available. Run the seed-players script first:</p>
+                  <code>node backend/seed-players.js</code>
+                </div>
+              ) : (
+                <>
+                  {/* TIER VISUALIZATION - Bar Chart */}
+                  <div className="tier-chart">
+                    {tiers.map(tier => {
+                      const percent = parseFloat(tier.budgetPercent) || 0;
+                      const barHeight = Math.max(percent * 2, 5); // Min 5px
+                      const tierColors = {
+                        'S': '#ff6b6b',
+                        'A+': '#ff9f43',
+                        'A': '#feca57',
+                        'B+': '#48dbfb',
+                        'B': '#0abde3',
+                        'C': '#a55eea',
+                        'D': '#8395a7'
+                      };
+                      
+                      return (
+                        <div 
+                          key={tier.tier}
+                          className={`tier-bar-wrapper ${expandedTier === tier.tier ? 'expanded' : ''}`}
+                          onClick={() => {
+                            if (expandedTier === tier.tier) {
+                              setExpandedTier(null);
+                            } else {
+                              setExpandedTier(tier.tier);
+                              if (!tierMarkets[tier.tier]) {
+                                loadTierMarkets(tier.tier);
+                              }
+                            }
+                          }}
+                        >
+                          <div className="tier-bar-label">{tier.tier}</div>
+                          <div 
+                            className="tier-bar"
+                            style={{ 
+                              height: `${barHeight}px`,
+                              backgroundColor: tierColors[tier.tier] || '#666'
+                            }}
+                          >
+                            <span className="tier-bar-percent">{percent.toFixed(1)}%</span>
+                          </div>
+                          <div className="tier-bar-count">{tier.marketCount} players</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* TIER TABLE WITH SLIDERS */}
+                  <div className="tier-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Tier</th>
+                          <th>Budget %</th>
+                          <th>Adjustment</th>
+                          <th>Markets</th>
+                          <th>Sample Players</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tiers.map(tier => (
+                          <tr key={tier.tier} className={expandedTier === tier.tier ? 'selected' : ''}>
+                            <td className="tier-name">
+                              <span className={`tier-badge tier-${tier.tier.replace('+', '-plus')}`}>
+                                {tier.tier}
+                              </span>
+                            </td>
+                            <td className="tier-budget">
+                              <strong>{parseFloat(tier.budgetPercent).toFixed(1)}%</strong>
+                            </td>
+                            <td className="tier-slider">
+                              <input 
+                                type="range"
+                                min="0"
+                                max="50"
+                                step="0.5"
+                                value={parseFloat(tier.budgetPercent) || 0}
+                                onChange={e => {
+                                  const newValue = parseFloat(e.target.value);
+                                  handleTierBudgetChange(tier.tier, newValue);
+                                }}
+                                disabled={saving}
+                              />
+                              <input 
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.5"
+                                value={parseFloat(tier.budgetPercent).toFixed(1)}
+                                onChange={e => {
+                                  const newValue = parseFloat(e.target.value) || 0;
+                                  handleTierBudgetChange(tier.tier, newValue);
+                                }}
+                                className="tier-input"
+                                disabled={saving}
+                              />
+                              <span>%</span>
+                            </td>
+                            <td className="tier-markets">{tier.marketCount}</td>
+                            <td className="tier-players">
+                              {tier.players?.slice(0, 3).join(', ')}
+                              {tier.players?.length > 3 && '...'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr>
+                          <td><strong>Total</strong></td>
+                          <td>
+                            <strong className={Math.abs(tiers.reduce((s, t) => s + parseFloat(t.budgetPercent || 0), 0) - 100) < 0.1 ? 'total-ok' : 'total-error'}>
+                              {tiers.reduce((s, t) => s + parseFloat(t.budgetPercent || 0), 0).toFixed(1)}%
+                            </strong>
+                          </td>
+                          <td></td>
+                          <td><strong>{tiers.reduce((s, t) => s + t.marketCount, 0)}</strong></td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  {/* EXPANDED TIER DETAILS */}
+                  {expandedTier && (
+                    <div className="tier-details">
+                      <h4>Tier {expandedTier} Players</h4>
+                      {tierMarkets[expandedTier] ? (
+                        <div className="tier-players-list">
+                          <table className="mini-table">
+                            <thead>
+                              <tr>
+                                <th>Player</th>
+                                <th>Rating</th>
+                                <th>Score</th>
+                                <th>Weight</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {tierMarkets[expandedTier].map(m => (
+                                <tr key={m.market_id}>
+                                  <td>{m.name}</td>
+                                  <td>{m.fide_rating || '-'}</td>
+                                  <td>{m.likelihood_score || '-'}</td>
+                                  <td>{((m.weight || 0) * 100).toFixed(2)}%</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="loading">Loading players...</div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* TIER LEGEND */}
+                  <div className="tier-legend">
+                    <h4>Tier Definitions</h4>
+                    <div className="legend-items">
+                      <div className="legend-item"><span className="tier-badge tier-S">S</span> Score 70+ (Most Likely)</div>
+                      <div className="legend-item"><span className="tier-badge tier-A-plus">A+</span> Score 60-69 (Very Likely)</div>
+                      <div className="legend-item"><span className="tier-badge tier-A">A</span> Score 50-59 (Likely)</div>
+                      <div className="legend-item"><span className="tier-badge tier-B-plus">B+</span> Score 40-49 (Above Average)</div>
+                      <div className="legend-item"><span className="tier-badge tier-B">B</span> Score 25-39 (Average)</div>
+                      <div className="legend-item"><span className="tier-badge tier-C">C</span> Score 0-24 (Below Average)</div>
+                      <div className="legend-item"><span className="tier-badge tier-D">D</span> Score &lt;0 (Unlikely)</div>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>

@@ -729,7 +729,59 @@ app.post('/api/wallet/withdraw', authMiddleware, (req, res) => {
     VALUES (?, ?, 'withdrawal', ?, ?, ?, 'completed')
   `).run(uuidv4(), req.user.id, -amount_sats, newBalance, payment_request);
   
-  res.json({ success: true, balance_sats: newBalance });
+  // BOT SAFEGUARD: If user is admin with bot active, check if max_loss exceeds new balance
+  // and proportionally reduce offers if needed
+  let botAdjustment = null;
+  if (req.user.is_admin) {
+    try {
+      const config = bot.getConfig();
+      if (config && config.max_acceptable_loss > newBalance) {
+        // Max loss now exceeds balance - need to reduce it to match new balance
+        const oldMaxLoss = config.max_acceptable_loss;
+        const ratio = newBalance / oldMaxLoss;
+        
+        // Update config to new max loss
+        bot.updateConfig({ max_acceptable_loss: newBalance });
+        
+        // If there are active orders, cancel and redeploy with reduced amounts
+        const activeOrders = db.prepare(`
+          SELECT COUNT(*) as count FROM orders 
+          WHERE user_id = ? AND status IN ('open', 'partial')
+        `).get(req.user.id);
+        
+        if (activeOrders.count > 0) {
+          // Withdraw all orders and let the user redeploy manually
+          const withdrawResult = bot.withdrawAllOrders(req.user.id);
+          botAdjustment = {
+            reduced: true,
+            old_max_loss: oldMaxLoss,
+            new_max_loss: newBalance,
+            ratio: ratio,
+            orders_withdrawn: withdrawResult.ordersCancelled,
+            refunded: withdrawResult.refund,
+            message: 'Bot max_loss reduced to match new balance. Orders withdrawn - please redeploy.'
+          };
+        } else {
+          botAdjustment = {
+            reduced: true,
+            old_max_loss: oldMaxLoss,
+            new_max_loss: newBalance,
+            ratio: ratio,
+            message: 'Bot max_loss reduced to match new balance.'
+          };
+        }
+      }
+    } catch (err) {
+      console.error('Bot adjustment on withdrawal failed:', err);
+      // Continue with withdrawal even if bot adjustment fails
+    }
+  }
+  
+  res.json({ 
+    success: true, 
+    balance_sats: newBalance,
+    bot_adjustment: botAdjustment
+  });
 });
 
 // ==================== MARKET ROUTES ====================
@@ -1179,6 +1231,22 @@ app.get('/api/admin/bot/config', authMiddleware, adminMiddleware, (req, res) => 
 app.put('/api/admin/bot/config', authMiddleware, adminMiddleware, (req, res) => {
   try {
     const { max_acceptable_loss, total_liquidity, threshold_percent, global_multiplier, is_active } = req.body;
+    
+    // VALIDATION: max_acceptable_loss cannot exceed user's current balance
+    if (max_acceptable_loss !== undefined) {
+      const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
+      if (!user) {
+        return res.status(400).json({ error: 'User not found' });
+      }
+      if (max_acceptable_loss > user.balance_sats) {
+        return res.status(400).json({ 
+          error: 'Max acceptable loss cannot exceed your balance',
+          max_allowed: user.balance_sats,
+          requested: max_acceptable_loss
+        });
+      }
+    }
+    
     const config = bot.updateConfig({
       max_acceptable_loss,
       total_liquidity,
@@ -1599,6 +1667,53 @@ app.post('/api/admin/bot/weights/batch-odds', authMiddleware, adminMiddleware, (
     res.json({ success: true, weights });
   } catch (err) {
     res.status(500).json({ error: 'Failed to batch set odds', message: err.message });
+  }
+});
+
+// ==================== TIER MANAGEMENT ROUTES ====================
+
+// Get tier summary (all tiers with budget percentages)
+app.get('/api/admin/bot/tiers', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const tiers = bot.getTierSummary();
+    res.json(tiers);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get tier summary', message: err.message });
+  }
+});
+
+// Get markets in a specific tier
+app.get('/api/admin/bot/tiers/:tier/markets', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const markets = bot.getMarketsByTier(req.params.tier);
+    res.json(markets);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get tier markets', message: err.message });
+  }
+});
+
+// Set budget percentage for a tier (auto-rebalances other tiers)
+app.put('/api/admin/bot/tiers/:tier/budget', authMiddleware, adminMiddleware, (req, res) => {
+  const { budget_percent } = req.body;
+  if (budget_percent === undefined || budget_percent < 0 || budget_percent > 100) {
+    return res.status(400).json({ error: 'budget_percent must be between 0 and 100' });
+  }
+  try {
+    const tiers = bot.setTierBudget(req.params.tier, budget_percent);
+    res.json({ success: true, tiers });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to set tier budget', message: err.message });
+  }
+});
+
+// Initialize weights from likelihood scores
+app.post('/api/admin/bot/tiers/initialize-from-scores', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    bot.initializeWeightsFromScores();
+    const tiers = bot.getTierSummary();
+    res.json({ success: true, tiers });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to initialize from scores', message: err.message });
   }
 });
 

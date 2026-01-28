@@ -3050,3 +3050,278 @@ label {
     width: 100%;
   }
 }
+
+/* ==================== TIER MANAGEMENT ==================== */
+.bot-tiers {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.tiers-header h3 {
+  font-size: 1.25rem;
+  color: var(--text-bright);
+  margin-bottom: 0.5rem;
+}
+
+.tiers-info {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  margin-bottom: 1rem;
+  line-height: 1.6;
+}
+
+.tier-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.loading-tiers,
+.empty-tiers {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-muted);
+}
+
+.empty-tiers code {
+  display: block;
+  margin-top: 0.75rem;
+  background: var(--bg-input);
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-sm);
+  font-family: 'SF Mono', Monaco, monospace;
+  color: var(--accent);
+}
+
+/* Tier Bar Chart */
+.tier-chart {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  padding: 1.5rem 1rem;
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+}
+
+.tier-bar-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.tier-bar-wrapper:hover,
+.tier-bar-wrapper.expanded {
+  background: var(--bg-card-hover);
+}
+
+.tier-bar-wrapper.expanded {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.tier-bar-label {
+  font-weight: 700;
+  font-size: 0.875rem;
+  color: var(--text-bright);
+}
+
+.tier-bar {
+  width: 50px;
+  min-height: 10px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: height 0.3s ease;
+}
+
+.tier-bar-percent {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: #000;
+  text-shadow: 0 0 2px rgba(255,255,255,0.5);
+}
+
+.tier-bar-count {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+/* Tier Table */
+.tier-table {
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.tier-table table {
+  width: 100%;
+  font-size: 0.875rem;
+  border-collapse: collapse;
+}
+
+.tier-table th,
+.tier-table td {
+  padding: 0.75rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.tier-table th {
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.tier-table tr.selected {
+  background: rgba(247, 147, 26, 0.1);
+}
+
+.tier-table tfoot td {
+  background: var(--bg-card);
+  font-weight: 600;
+}
+
+.tier-name {
+  font-weight: 600;
+}
+
+.tier-badge {
+  display: inline-block;
+  padding: 0.25rem 0.625rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.tier-badge.tier-S { background: #ff6b6b; color: #000; }
+.tier-badge.tier-A-plus { background: #ff9f43; color: #000; }
+.tier-badge.tier-A { background: #feca57; color: #000; }
+.tier-badge.tier-B-plus { background: #48dbfb; color: #000; }
+.tier-badge.tier-B { background: #0abde3; color: #000; }
+.tier-badge.tier-C { background: #a55eea; color: #fff; }
+.tier-badge.tier-D { background: #8395a7; color: #000; }
+
+.tier-budget {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.tier-slider {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tier-slider input[type="range"] {
+  width: 120px;
+  margin: 0;
+}
+
+.tier-input {
+  width: 60px !important;
+  padding: 0.375rem 0.5rem !important;
+  margin: 0 !important;
+  font-size: 0.8125rem !important;
+}
+
+.tier-markets {
+  text-align: center;
+}
+
+.tier-players {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.total-ok {
+  color: var(--yes-color) !important;
+}
+
+.total-error {
+  color: var(--no-color) !important;
+}
+
+/* Tier Details (Expanded) */
+.tier-details {
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  padding: 1.25rem;
+}
+
+.tier-details h4 {
+  font-size: 1rem;
+  color: var(--text-bright);
+  margin-bottom: 1rem;
+}
+
+.tier-players-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* Tier Legend */
+.tier-legend {
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  padding: 1.25rem;
+}
+
+.tier-legend h4 {
+  font-size: 0.9375rem;
+  color: var(--text-bright);
+  margin-bottom: 1rem;
+}
+
+.legend-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.5rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+/* Responsive Tier Management */
+@media (max-width: 768px) {
+  .tier-chart {
+    flex-wrap: wrap;
+  }
+
+  .tier-table {
+    overflow-x: auto;
+  }
+
+  .tier-slider {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .tier-slider input[type="range"] {
+    width: 100%;
+  }
+
+  .legend-items {
+    grid-template-columns: 1fr;
+  }
+}

@@ -43,6 +43,9 @@ db.exec(`
     title TEXT DEFAULT 'GM',
     image_url TEXT,
     is_influencer INTEGER DEFAULT 0,
+    tier TEXT,
+    likelihood_score INTEGER,
+    key_factors TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   );
 
@@ -262,6 +265,23 @@ try {
   users.forEach((user, index) => {
     db.prepare('UPDATE users SET account_number = ? WHERE id = ?').run(index + 1, user.id);
   });
+} catch (e) {
+  // Column already exists, ignore
+}
+
+// Migration: Add tier columns to grandmasters table
+try {
+  db.exec(`ALTER TABLE grandmasters ADD COLUMN tier TEXT`);
+} catch (e) {
+  // Column already exists, ignore
+}
+try {
+  db.exec(`ALTER TABLE grandmasters ADD COLUMN likelihood_score INTEGER`);
+} catch (e) {
+  // Column already exists, ignore
+}
+try {
+  db.exec(`ALTER TABLE grandmasters ADD COLUMN key_factors TEXT`);
 } catch (e) {
   // Column already exists, ignore
 }

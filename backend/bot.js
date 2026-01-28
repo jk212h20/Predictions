@@ -243,6 +243,203 @@ function updateShape(id, params) {
   return getShape(id);
 }
 
+// ==================== TIER DEFINITIONS ====================
+
+/**
+ * Tier order for sorting and display
+ */
+const TIER_ORDER = ['S', 'A+', 'A', 'B+', 'B', 'C', 'D'];
+
+/**
+ * Get all tiers with their markets and weights
+ */
+function getTierSummary() {
+  const tiers = db.prepare(`
+    SELECT 
+      g.tier,
+      COUNT(DISTINCT m.id) as market_count,
+      COALESCE(SUM(w.weight), 0) as total_weight,
+      GROUP_CONCAT(g.name, ', ') as players
+    FROM grandmasters g
+    JOIN markets m ON m.grandmaster_id = g.id AND m.type = 'attendance' AND m.status = 'open'
+    LEFT JOIN bot_market_weights w ON w.market_id = m.id
+    WHERE g.tier IS NOT NULL
+    GROUP BY g.tier
+    ORDER BY 
+      CASE g.tier 
+        WHEN 'S' THEN 1 WHEN 'A+' THEN 2 WHEN 'A' THEN 3 
+        WHEN 'B+' THEN 4 WHEN 'B' THEN 5 WHEN 'C' THEN 6 WHEN 'D' THEN 7 
+      END
+  `).all();
+  
+  return tiers.map(t => ({
+    tier: t.tier,
+    marketCount: t.market_count,
+    totalWeight: t.total_weight,
+    budgetPercent: (t.total_weight * 100).toFixed(2),
+    players: t.players ? t.players.split(', ').slice(0, 5) : [] // First 5 player names
+  }));
+}
+
+/**
+ * Get markets by tier with their weights
+ */
+function getMarketsByTier(tier) {
+  return db.prepare(`
+    SELECT 
+      m.id as market_id,
+      g.id as gm_id,
+      g.name,
+      g.fide_rating,
+      g.tier,
+      g.likelihood_score,
+      COALESCE(w.weight, 0) as weight,
+      COALESCE(w.is_locked, 0) as is_locked
+    FROM grandmasters g
+    JOIN markets m ON m.grandmaster_id = g.id AND m.type = 'attendance' AND m.status = 'open'
+    LEFT JOIN bot_market_weights w ON w.market_id = m.id
+    WHERE g.tier = ?
+    ORDER BY g.likelihood_score DESC
+  `).all(tier);
+}
+
+/**
+ * Set total budget percentage for a tier
+ * This will:
+ * 1. Calculate the new total weight for this tier
+ * 2. Distribute it proportionally among tier markets based on their relative weights
+ * 3. Scale other tier weights to maintain sum = 1.0
+ * 
+ * @param {string} tier - Tier to adjust (S, A+, A, B+, B, C, D)
+ * @param {number} budgetPercent - New budget percentage for this tier (0-100)
+ */
+function setTierBudget(tier, budgetPercent) {
+  const newTierWeight = Math.max(0, Math.min(100, budgetPercent)) / 100;
+  
+  // Get all tiers' current weights
+  const allTiers = getTierSummary();
+  const currentTier = allTiers.find(t => t.tier === tier);
+  
+  if (!currentTier) {
+    throw new Error(`Tier ${tier} not found`);
+  }
+  
+  const oldTierWeight = currentTier.totalWeight;
+  const weightDiff = newTierWeight - oldTierWeight;
+  
+  // Get markets in this tier
+  const tierMarkets = getMarketsByTier(tier);
+  
+  if (tierMarkets.length === 0) {
+    throw new Error(`No markets in tier ${tier}`);
+  }
+  
+  // Calculate sum of weights for OTHER tiers (not this one)
+  const otherTiersWeight = allTiers
+    .filter(t => t.tier !== tier)
+    .reduce((sum, t) => sum + t.totalWeight, 0);
+  
+  // Begin transaction
+  const updateTier = db.transaction(() => {
+    // 1. Distribute new weight among this tier's markets proportionally
+    const tierCurrentTotal = tierMarkets.reduce((sum, m) => sum + m.weight, 0);
+    
+    for (const market of tierMarkets) {
+      // Ensure market has a weight record
+      const existingWeight = db.prepare(`SELECT * FROM bot_market_weights WHERE market_id = ?`).get(market.market_id);
+      
+      let newMarketWeight;
+      if (tierCurrentTotal > 0) {
+        // Proportional distribution based on current weights within tier
+        const proportion = market.weight / tierCurrentTotal;
+        newMarketWeight = newTierWeight * proportion;
+      } else {
+        // Equal distribution if no current weights
+        newMarketWeight = newTierWeight / tierMarkets.length;
+      }
+      
+      if (existingWeight) {
+        db.prepare(`
+          UPDATE bot_market_weights SET weight = ?, updated_at = datetime('now') WHERE market_id = ?
+        `).run(newMarketWeight, market.market_id);
+      } else {
+        db.prepare(`
+          INSERT INTO bot_market_weights (id, market_id, weight, relative_odds)
+          VALUES (?, ?, ?, 1.0)
+        `).run(uuidv4(), market.market_id, newMarketWeight);
+      }
+    }
+    
+    // 2. Scale other tiers proportionally to maintain sum = 1.0
+    if (otherTiersWeight > 0 && weightDiff !== 0) {
+      const remainingBudget = Math.max(0, 1.0 - newTierWeight);
+      const scale = remainingBudget / otherTiersWeight;
+      
+      for (const otherTier of allTiers.filter(t => t.tier !== tier)) {
+        const otherMarkets = getMarketsByTier(otherTier.tier);
+        for (const market of otherMarkets) {
+          const existingWeight = db.prepare(`SELECT * FROM bot_market_weights WHERE market_id = ?`).get(market.market_id);
+          if (existingWeight && !existingWeight.is_locked) {
+            const scaledWeight = market.weight * scale;
+            db.prepare(`
+              UPDATE bot_market_weights SET weight = ?, updated_at = datetime('now') WHERE market_id = ?
+            `).run(scaledWeight, market.market_id);
+          }
+        }
+      }
+    }
+  });
+  
+  updateTier();
+  
+  // Final normalization
+  normalizeWeights();
+  
+  return getTierSummary();
+}
+
+/**
+ * Initialize weights for all markets based on tier likelihood scores
+ * Higher score = higher weight within tier
+ */
+function initializeWeightsFromScores() {
+  const markets = db.prepare(`
+    SELECT m.id, g.likelihood_score, g.tier
+    FROM markets m
+    JOIN grandmasters g ON m.grandmaster_id = g.id
+    WHERE m.type = 'attendance' AND m.status = 'open' AND g.likelihood_score IS NOT NULL
+  `).all();
+  
+  if (markets.length === 0) return;
+  
+  // Calculate total score to normalize
+  const totalScore = markets.reduce((sum, m) => sum + Math.max(1, m.likelihood_score), 0);
+  
+  const init = db.transaction(() => {
+    for (const market of markets) {
+      const score = Math.max(1, market.likelihood_score);
+      const weight = score / totalScore;
+      
+      const existing = db.prepare(`SELECT * FROM bot_market_weights WHERE market_id = ?`).get(market.id);
+      
+      if (existing) {
+        db.prepare(`
+          UPDATE bot_market_weights SET weight = ?, relative_odds = ?, updated_at = datetime('now')
+          WHERE market_id = ?
+        `).run(weight, score, market.id);
+      } else {
+        db.prepare(`
+          INSERT INTO bot_market_weights (id, market_id, weight, relative_odds)
+          VALUES (?, ?, ?, ?)
+        `).run(uuidv4(), market.id, weight, score);
+      }
+    }
+  });
+  
+  init();
+  normalizeWeights();
+}
+
 // ==================== MARKET WEIGHTS ====================
 
 /**
@@ -1428,6 +1625,13 @@ module.exports = {
   setDefaultShape,
   deleteShape,
   updateShape,
+  
+  // Tier Management
+  TIER_ORDER,
+  getTierSummary,
+  getMarketsByTier,
+  setTierBudget,
+  initializeWeightsFromScores,
   
   // Market Weights (Auto-Rebalancing)
   initializeMarketWeights,

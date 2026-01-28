@@ -1,0 +1,662 @@
+# GM Research Report
+
+Generated: 2026-01-28T06:11:21.317Z
+
+## Summary
+
+- **Total players in database:** 101
+- **Players with AI enrichment:** 101
+
+---
+
+## Key Findings
+
+### Deceased Players (0)
+
+_None identified_
+
+### Retired Players (15)
+
+- **Anand, Viswanathan** (IND, 2743)
+  - Source: Viswanathan Anand is a retired chess player who last played competitively in 2025
+- **Andreikin, Dmitry** (FID, 2710)
+  - Source: STATUS INFO section states he retired from competitive play in 2020
+- **Fedoseev, Vladimir** (SLO, 2705)
+  - Source: STATUS INFO indicates he is a retired chess grandmaster who retired in 2026
+- **Radjabov, Teimour** (AZE, 2692)
+  - Source: STATUS INFO section states he retired in 2005 due to health issues
+- **Wang, Hao** (CHN, 2687)
+  - Source: Wang Hao declared his retirement from professional chess after Candidates 2021, but made a return to elite play in 2022 at the Norway Chess tournament and has since resumed activity
+- **Svidler, Peter** (FID, 2682)
+  - Source: STATUS INFO section states he retired from competitive play in 2020
+- **Bu, Xiangzhi** (CHN, 2665)
+  - Source: STATUS INFO section states he retired in 2021
+- **Oparin, Grigoriy** (USA, 2658)
+  - Source: STATUS INFO section states he is retired and last played in 2025
+- **Saric, Ivan** (CRO, 2655)
+  - Source: STATUS INFO section states Ivan Šarić is a retired Croatian chess grandmaster who retired from competitive chess
+- **Gledura, Benjamin** (HUN, 2654)
+  - Source: STATUS INFO section indicates he is a retired Hungarian chess Grandmaster
+- **Morozevich, Alexander** (RUS, 2653)
+  - Source: STATUS INFO states he retired from competitive chess in 2015
+- **Murzin, Volodar** (FID, 2652)
+  - Source: STATUS INFO section states he is retired and no longer competing
+- **Robson, Ray** (USA, 2650)
+  - Source: STATUS INFO indicates Ray Robson retired in 2020
+- **Tari, Aryan** (NOR, 2637)
+  - Source: STATUS INFO section states he retired from competitive chess in 2021
+- **Adams, Michael** (ENG, 2635)
+  - Source: STATUS INFO section states 'Michael Adams is a retired English chess Grandmaster'
+
+### Banned Players (0)
+
+_None identified_
+
+### Players with Chess960/Fischer Random Experience (91)
+
+- **Carlsen, Magnus** (NOR, 2840)
+  - Events: Fischer Random match against Hikaru Nakamura, Chess960 tournaments, 2025 Freestyle Chess Grand Slam Tour
+  - Opinion: "enjoys playing against top players in Chess960"
+- **Nakamura, Hikaru** (USA, 2810)
+  - Events: 2022 Fischer Random World Chess Championship, Fischer Random Rapid game against Magnus Carlsen in 2018
+  - Opinion: "Known for his success in Chess 960, or Fischer Random Chess"
+- **Caruana, Fabiano** (USA, 2795)
+  - Events: 2022 Chess 9LX (Fischer Random) championship, Freestyle Chess vs Gukesh D
+  - Opinion: "unknown"
+- **Keymer, Vincent** (GER, 2776)
+  - Events: Weissenhaus Freestyle Chess Grand Slam 2025
+  - Opinion: "Keymer's adaptability and talent have made him a champion in Chess 960"
+- **Erigaisi Arjun** (IND, 2775)
+  - Events: Chess960 match against Magnus Carlsen
+  - Opinion: "Supports the growth of Fischer Random chess and believes Fischer Random will become more popular"
+- **Giri, Anish** (NED, 2760)
+  - Events: 2018 Champions Showdown, matches against Vidit Gujrathi
+  - Opinion: "Claimed to develop Chess960 theory in a year, notable for innovative opening variations"
+- **Firouzja, Alireza** (FRA, 2759)
+  - Events: 2024 Freestyle Chess event
+  - Opinion: "unknown"
+- **Gukesh D** (IND, 2754)
+  - Events: Weissenhaus Freestyle GOAT Challenge with Magnus Carlsen
+  - Opinion: "unknown"
+- **Wei, Yi** (CHN, 2754)
+  - Events: FIDE World Cup, Fischer Random World Championship
+  - Opinion: "unknown"
+- **So, Wesley** (USA, 2753)
+  - Events: World Fischer Random Chess Championship 2019, FTX Crypto Cup
+  - Opinion: "He favors this variant of chess for its unique challenges"
+- **Abdusattorov, Nodirbek** (UZB, 2751)
+  - Events: 2022 FIDE World Fischer Random Chess Championship, FIDE Freestyle Chess World Championship
+  - Opinion: "unknown"
+- **Anand, Viswanathan** (IND, 2743)
+  - Events: 12-game Chess960 match against Garry Kasparov in 2025 at St. Louis Chess Club
+  - Opinion: "unknown"
+- **Dominguez Perez, Leinier** (USA, 2738)
+  - Events: 2021 Champions Showdown Chess 9LX, Fischer Random World Chess Championship Qualifiers
+  - Opinion: "unknown"
+- **Vachier-Lagrave, Maxime** (FRA, 2734)
+  - Events: 2018 Chess.com Chess960 Championship, Fischer Random Chess event hosted by Chessgames.com
+  - Opinion: "unknown"
+- **Duda, Jan-Krzysztof** (POL, 2731)
+  - Events: 2019 FIDE World Fischer Random Chess Championship
+  - Opinion: "unknown"
+- **Le, Quang Liem** (VIE, 2731)
+  - Events: Fischer Random Chess Championship knockout qualifier
+  - Opinion: "unknown"
+- **Mamedyarov, Shakhriyar** (AZE, 2730)
+  - Events: Champions Showdown 9LX in 2021, Saint Louis 9LX Chess
+  - Opinion: "believes Chess960 will eventually replace standard chess"
+- **Aronian, Levon** (USA, 2729)
+  - Events: Chess960 World Championship, Freestyle Chess Grand Slam
+  - Opinion: "unknown"
+- **Sindarov, Javokhir** (UZB, 2726)
+  - Events: Freestyle Grand Slam Weissenhaus 2025, Fischer Random tournaments
+  - Opinion: "unknown"
+- **Niemann, Hans Moke** (USA, 2725)
+  - Events: ChessKid Games 2019
+  - Opinion: "unknown"
+- **Nepomniachtchi, Ian** (RUS, 2723)
+  - Events: 2019 FIDE World Fischer Random Chess Championship, 2022 semi-finals against Magnus Carlsen
+  - Opinion: "unknown"
+- **Yu, Yangyi** (CHN, 2717)
+  - Events: ACCENTUS Chess960 tournament
+  - Opinion: "unknown"
+- **Nihal Sarin** (IND, 2716)
+  - Events: Reykjavik Open Fischer Random Chess
+  - Opinion: "unknown"
+- **Andreikin, Dmitry** (FID, 2710)
+  - Opinion: "unknown"
+- **Maghsoodloo, Parham** (IRI, 2708)
+  - Events: FIDE World Fischer Random Chess Championship
+  - Opinion: "unknown"
+- **Vidit, Santosh Gujrathi** (IND, 2708)
+  - Events: World Fischer Random Chess Championship, Chess960 tournaments
+  - Opinion: "unknown"
+- **Fedoseev, Vladimir** (SLO, 2705)
+  - Events: 2022 Fischer Random World Championship qualifier, European Fischer Random Championship 2024
+  - Opinion: "His style often incorporates elements of Chess960 and freestyle chess"
+- **Van Foreest, Jorden** (NED, 2703)
+  - Events: Dutch Chess Championship 2016
+  - Opinion: "His style has been compared to Bobby Fischer"
+- **Aravindh, Chithambaram VR.** (IND, 2700)
+  - Events: Biel Chess Festival Chess960 events
+  - Opinion: "unknown"
+- **Tabatabaei, M. Amin** (IRI, 2700)
+  - Events: Chess 960 (Fischer Random) tournaments, Freestyle Grandslam Chess 960 Germany 2025
+  - Opinion: "unknown"
+- **Esipenko, Andrey** (RUS, 2698)
+  - Events: World Fischer Random Chess Championship qualification, Fischer Random Chess matches including defeat of Anatoly Bykhovsky, Semifinals against Svidler
+  - Opinion: "unknown"
+- **Radjabov, Teimour** (AZE, 2692)
+  - Events: Chess960 (Fischer Random) tournaments against top players like Anand
+  - Opinion: "unknown"
+- **Yakubboev, Nodirbek** (UZB, 2691)
+  - Events: Chess 960 (Fischer Random) tournaments, rapid event at World Championships
+  - Opinion: "unknown"
+- **Sevian, Samuel** (USA, 2688)
+  - Events: 2023 Champions Showdown Chess 960, first-ever FIDE-sanctioned Fischer Random World Chess Championship
+  - Opinion: "unknown"
+- **Wang, Hao** (CHN, 2687)
+  - Events: Fischer Random Chess 960
+  - Opinion: "unknown"
+- **Sarana, Alexey** (SRB, 2686)
+  - Events: World Fischer Random Chess Championship 2022, King Salman World Rapid & Blitz Championship, grenke Freestyle Chess Open
+  - Opinion: "unknown"
+- **Kovalenko, Igor** (UKR, 2682)
+  - Events: Biel International Chess Festival
+  - Opinion: "unknown"
+- **Svidler, Peter** (FID, 2682)
+  - Events: Fischer Random Chess match against The Baron chess program 2005, Fischer Random Chess tournament in Mainz 2002, FIDE World Fischer Random Chess Championship
+  - Opinion: "unknown"
+- **Harikrishna, Pentala** (IND, 2679)
+  - Events: Chess960 (Fischer Random) Junior Chess Championship 2006
+  - Opinion: "unknown"
+- **Bluebaum, Matthias** (GER, 2679)
+  - Events: 2022 FIDE World Fischer Random Chess Championship, European Chess Championship
+  - Opinion: "unknown"
+- **Leko, Peter** (HUN, 2676)
+  - Events: First Fischer Random Chess tournament winner (1996), Fischer Random Chess match vs Michael Adams (2001), Chess960 World Championship vs Peter Svidler (2003)
+  - Opinion: "unknown"
+- **Dubov, Daniil** (RUS, 2672)
+  - Events: Freestyle Chess Grand Slam Tour
+  - Opinion: "Has discussed challenges in playing against Magnus Carlsen in Chess960/Fischer Random"
+- **Howell, David W L** (ENG, 2668)
+  - Events: Fischer Random Chess competitions
+  - Opinion: "His unique style adapts well to the random starting positions of Chess960"
+- **Wojtaszek, Radoslaw** (POL, 2667)
+  - Events: Accentus Chess960 Masters in Biel, Grandmaster Triathlon
+  - Opinion: "unknown"
+- **Martinez Alcantara, Jose Eduardo** (MEX, 2667)
+  - Events: 2022 Fischer Random World Championship Qualifier
+  - Opinion: "unknown"
+- **Donchenko, Alexander** (GER, 2665)
+  - Events: 2022 Fischer Random World Championship Qualifier
+  - Opinion: "unknown"
+- **Bu, Xiangzhi** (CHN, 2665)
+  - Events: Fischer Random Chess
+  - Opinion: "unknown"
+- **Kasimdzhanov, Rustam** (UZB, 2664)
+  - Events: unknown
+  - Opinion: "Has been influential in discussions about Chess960"
+- **Vitiugov, Nikita** (ENG, 2663)
+  - Events: 2022 FIDE World Fischer Random Chess Championship
+  - Opinion: "unknown"
+- **Anton Guijarro, David** (ESP, 2662)
+  - Events: Chess960, Fischer Random chess
+  - Opinion: "unknown"
+- **Grandelius, Nils** (SWE, 2660)
+  - Events: 2022 FIDE World Fischer Random Chess Championship, grenke Freestyle Chess Open 2025
+  - Opinion: "unknown"
+- **Erdogmus, Yagiz Kaan** (TUR, 2658)
+  - Events: Chess960 (Fischer Random) games mentioned
+  - Opinion: "unknown"
+- **Oparin, Grigoriy** (USA, 2658)
+  - Events: knockout qualifier in 2019 against Vladimir Fedoseev, 2026 FIDE Freestyle Chess World Championship Play-In
+  - Opinion: "unknown"
+- **Xiong, Jeffery** (USA, 2656)
+  - Events: 2022 Fischer Random World Championship Finals, Fischer Random Chess tournaments, St. Louis Chess Club online tournaments
+  - Opinion: "unknown"
+- **Christiansen, Johan-Sebastian** (NOR, 2656)
+  - Events: unknown
+  - Opinion: "unknown"
+- **Gledura, Benjamin** (HUN, 2654)
+  - Events: Fischer Random Chess tournaments
+  - Opinion: "unknown"
+- **Morozevich, Alexander** (RUS, 2653)
+  - Events: Fischer Random formats, Chess960
+  - Opinion: "unknown"
+- **Murzin, Volodar** (FID, 2652)
+  - Events: Fischer Random (Chess960) tournaments
+  - Opinion: "unknown"
+- **Deac, Bogdan-Daniel** (ROU, 2652)
+  - Events: 2023 Biel Chess Festival, Chess.com Freestyle Friday
+  - Opinion: "unknown"
+- **Shankland, Sam** (USA, 2651)
+  - Events: 2018 Champions Showdown
+  - Opinion: "unknown"
+- **Robson, Ray** (USA, 2650)
+  - Events: World Fischer Random Chess Championship 2019, competitions against Garry Kasparov in Chess 960
+  - Opinion: "unknown"
+- **Eljanov, Pavel** (UKR, 2649)
+  - Events: Reykjavik Open
+  - Opinion: "unknown"
+- **Svane, Frederik** (GER, 2649)
+  - Events: FIDE World Fischer Random Chess Championship 2022
+  - Opinion: "unknown"
+- **Karthikeyan, Murali** (IND, 2648)
+  - Events: Fischer Random tournament where he placed third behind Banh Gia Huy
+  - Opinion: "unknown"
+- **Theodorou, Nikolas** (GRE, 2648)
+  - Events: Chess960 and Fischer Random formats
+  - Opinion: "unknown"
+- **Grischuk, Alexander** (RUS, 2645)
+  - Events: World Fischer Random Championship qualifier, Fischer Random Chess tournaments against Magnus Carlsen and Hikaru Nakamura
+  - Opinion: "unknown"
+- **Gurel, Ediz** (TUR, 2645)
+  - Events: Chess960 (Fischer Random) tournaments
+  - Opinion: "unknown"
+- **Mamedov, Rauf** (AZE, 2645)
+  - Events: 2025 Paris Freestyle Chess Grand Slam Play-In, online Fischer Random Chess tournaments
+  - Opinion: "unknown"
+- **Vokhidov, Shamsiddin** (UZB, 2644)
+  - Events: Chess960 (Fischer Random Chess) tournaments
+  - Opinion: "unknown"
+- **Safarli, Eltaj** (AZE, 2644)
+  - Events: European Fischer Random Chess Championship
+  - Opinion: "unknown"
+- **Vallejo Pons, Francisco** (ESP, 2644)
+  - Events: Chess960 and Fischer Random formats
+  - Opinion: "unknown"
+- **Lu, Shanglei** (CHN, 2643)
+  - Events: FIDE World Blitz Championships, games against Magnus Carlsen
+  - Opinion: "unknown"
+- **Artemiev, Vladislav** (RUS, 2641)
+  - Events: Fischer Random Chess events
+  - Opinion: "unknown"
+- **Pranav, V** (IND, 2641)
+  - Events: 2022 Fischer Random World Championship qualifier, 2022 Fischer Random World Championship final, 2026 FIDE Freestyle Chess World Championship Play-In
+  - Opinion: "unknown"
+- **Alekseenko, Kirill** (AUT, 2639)
+  - Events: Fischer Random Chess (Chess960)
+  - Opinion: "unknown"
+- **Ivic, Velimir** (SRB, 2638)
+  - Events: Fischer Random (Chess 960) games against notable players
+  - Opinion: "There's No Bishop Pair Like Ivanchuk's Bishop Pair!"
+- **Sadhwani, Raunak** (IND, 2638)
+  - Events: Fischer Random Chess tournaments, Fischer-Random-Buddhibal-Kreeda-Trust-2020
+  - Opinion: "unknown"
+- **Tari, Aryan** (NOR, 2637)
+  - Opinion: "unknown"
+- **Adams, Michael** (ENG, 2635)
+  - Events: Fischer Random Chess world championship 2001
+  - Opinion: "unknown"
+- **Navara, David** (CZE, 2635)
+  - Events: 2022 Fischer Random World Championship qualifier, Chess960 game against Bassem Amin in 2023
+  - Opinion: "unknown"
+- **Salem, A.R. Saleh** (UAE, 2635)
+  - Opinion: "unknown"
+- **Ponomariov, Ruslan** (UKR, 2633)
+  - Events: Fischer Random Chess events, Freestyle Chess Grand Slam Tour 2025
+  - Opinion: "unknown"
+- **Bacrot, Etienne** (FRA, 2631)
+  - Events: 2006 FiNet Chess960 Open
+  - Opinion: "unknown"
+- **Gelfand, Boris** (ISR, 2630)
+  - Opinion: "unknown"
+- **Kollars, Dmitrij** (GER, 2630)
+  - Events: 2024 German Chess960 Championship
+  - Opinion: "unknown"
+- **Mishra, Abhimanyu** (USA, 2629)
+  - Events: World Fischer Random KO, Reykjavik ISL 2022, 57th Biel GM1-960 2024
+  - Opinion: "unknown"
+- **Chigaev, Maksim** (ESP, 2628)
+  - Events: various Chess960 tournaments
+  - Opinion: "unknown"
+- **Pranesh M** (IND, 2628)
+  - Events: 2023 Saint Louis Champions Showdown
+  - Opinion: "unknown"
+- **Bjerre, Jonas Buhl** (DEN, 2628)
+  - Events: 2020 Reykjavik Open, training game against Magnus Carlsen
+  - Opinion: "unknown"
+- **Van Wely, Loek** (NED, 2628)
+  - Events: NH Chess Tournament
+  - Opinion: "unknown"
+- **Suleymanli, Aydin** (AZE, 2628)
+  - Opinion: "unknown"
+
+### Players with Crypto/Bitcoin Connections (49)
+
+- **Carlsen, Magnus** (NOR, 2840)
+  - Details: Won world's first bitcoin chess tournament - FTX Crypto Cup 2021, defeated Wesley So in finals, prize fund was $210,000 plus additional $100,000 tied to Bitcoin price, took home 0.6 Bitcoin and $60,000 first prize
+- **Nakamura, Hikaru** (USA, 2810)
+  - Details: Won 1 BTC in a chess tournament and has discussed Bitcoin and stocks publicly
+- **Caruana, Fabiano** (USA, 2795)
+  - Details: Participated in FTX Crypto Cup chess tournament with cryptocurrency prizes and involved with Coinbase promotional activities
+- **Erigaisi Arjun** (IND, 2775)
+  - Details: Has used cryptocurrency for donations in his chess streams
+- **Giri, Anish** (NED, 2760)
+  - Details: Participated in FTX Crypto Cup and finished second, discussed Bitcoin as prize money in sports
+- **Firouzja, Alireza** (FRA, 2759)
+  - Details: Participated in the FTX Crypto Cup competing against Magnus Carlsen, became an ambassador for NFTs in 2022, event offered $100,000 Bitcoin bonus
+- **Praggnanandhaa R** (IND, 2758)
+  - Details: Defeated world champion Magnus Carlsen in the FTX Crypto Cup
+- **Gukesh D** (IND, 2754)
+  - Details: Known for his interest in cryptocurrency, particularly Bitcoin, and is a notable figure in both chess and crypto circles
+- **So, Wesley** (USA, 2753)
+  - Details: Participated in the FTX Crypto Cup, a bitcoin chess tournament, where he finished 5th. Has been involved in other crypto-related chess events
+- **Abdusattorov, Nodirbek** (UZB, 2751)
+  - Details: associated with cryptocurrency donations on his YouTube channel
+- **Anand, Viswanathan** (IND, 2743)
+  - Details: Known for supporting Bitcoin and discussing cryptocurrency investments, with financial strategies considered influential as of 2026
+- **Rapport, Richard** (HUN, 2738)
+  - Details: Has competed in chess tournaments where Bitcoin prizes were awarded, though achievements in chess are not directly linked to cryptocurrency
+- **Vachier-Lagrave, Maxime** (FRA, 2734)
+  - Details: Has partnered with Immortal Game and endorsed cryptocurrency projects. Involved with FTX Crypto Cup. Views on Bitcoin have been mixed
+- **Duda, Jan-Krzysztof** (POL, 2731)
+  - Details: participated in FTX Crypto Cup in 2022, tournament included cryptocurrency rewards including Bitcoin bonuses
+- **Le, Quang Liem** (VIE, 2731)
+  - Details: Competed against Magnus Carlsen in the FTX Crypto Cup, a chess event with cryptocurrency prizes
+- **Mamedyarov, Shakhriyar** (AZE, 2730)
+  - Details: competed in cryptocurrency-related events like the FTX Crypto Cup
+- **Aronian, Levon** (USA, 2729)
+  - Details: Participated in tournaments sponsored by cryptocurrency exchange FTX
+- **Sindarov, Javokhir** (UZB, 2726)
+  - Details: Associated with cryptocurrency markets on Polymarket
+- **Niemann, Hans Moke** (USA, 2725)
+  - Details: Competed against Magnus Carlsen in the 2022 FTX Crypto Chess Cup
+- **Nepomniachtchi, Ian** (RUS, 2723)
+  - Details: Participated in FTX Crypto Cup, won third place earning $25,000 plus 0.25 Bitcoin. Tournament offered $100,000 Bitcoin prize.
+- **Liang, Awonder** (USA, 2713)
+  - Details: Liang uses PayPal and crypto for donations
+- **Andreikin, Dmitry** (FID, 2710)
+  - Details: participated in Bitcoin-related online chess qualifiers
+- **Maghsoodloo, Parham** (IRI, 2708)
+  - Details: Has connections to cryptocurrency through sponsorships
+- **Vidit, Santosh Gujrathi** (IND, 2708)
+  - Details: Participated in 2021 FTX Crypto Cup and known for involvement in cryptocurrency markets
+- **Radjabov, Teimour** (AZE, 2692)
+  - Details: played in FTX Crypto Cup against Magnus Carlsen, considered a career in cryptocurrency, Bitcoin bonus was adjusted to 2.1825 BTC
+- **Sevian, Samuel** (USA, 2688)
+  - Details: Participated in FTX-sponsored tournaments including Miami qualifiers and Road to Miami event, with Bitcoin prizes offered
+- **Wang, Hao** (CHN, 2687)
+  - Details: Has participated in cryptocurrency-related chess events
+- **Kovalenko, Igor** (UKR, 2682)
+  - Details: Participated in chess tournaments offering Bitcoin as prizes, including the FTX Crypto Cup competing for $100,000 in Bitcoin
+- **Svidler, Peter** (FID, 2682)
+  - Details: Participated in 2021 FTX Crypto Chess Cup, a bitcoin-prized chess tournament, competing against Alexander Grischuk
+- **Bluebaum, Matthias** (GER, 2679)
+  - Details: Known for his involvement in cryptocurrency discussions
+- **Leko, Peter** (HUN, 2676)
+  - Details: Participated in the Champions Chess Tour's FTX Crypto Cup
+- **Dubov, Daniil** (RUS, 2672)
+  - Details: Participated in the Meltwater Champions Chess Tour which included a Bitcoin chess event
+- **Howell, David W L** (ENG, 2668)
+  - Details: Participated in the 2022 Champions Chess Tour FTX Crypto Cup, a chess tournament with cryptocurrency sponsorship. Known for chess achievements, not cryptocurrency.
+- **Kasimdzhanov, Rustam** (UZB, 2664)
+  - Details: Has participated in cryptocurrency-related chess events, including the FTX Crypto Cup
+- **Grandelius, Nils** (SWE, 2660)
+  - Details: Has been involved in cryptocurrency, including a notable experience with a Bitcoin scam
+- **Erdogmus, Yagiz Kaan** (TUR, 2658)
+  - Details: Supports himself through cryptocurrency donations
+- **Xiong, Jeffery** (USA, 2656)
+  - Details: Known for his participation in cryptocurrency-sponsored chess events and has earned significant prize money
+- **Nguyen, Thai Dai Van** (CZE, 2656)
+  - Details: Known for his involvement with cryptocurrency
+- **Gledura, Benjamin** (HUN, 2654)
+  - Details: His profile is verified on Algorand blockchain
+- **Shankland, Sam** (USA, 2651)
+  - Details: Participated in FTX Crypto Cup 2022 in Miami, competed when world's top 16 chess players competed in FTX Crypto Cup with $100000 in Bitcoin prizes
+- **Robson, Ray** (USA, 2650)
+  - Details: Bitcoin has been used as a prize in some of his competitions
+- **Grischuk, Alexander** (RUS, 2645)
+  - Details: Participated in the FTX Crypto Chess Cup where Bitcoin was used as prize money, competed against Magnus Carlsen in notable chess events
+- **Mamedov, Rauf** (AZE, 2645)
+  - Details: Participated in FTX Crypto Cup in 2023 which offered $100,000 in Bitcoin as part of its prize
+- **Pranav, V** (IND, 2641)
+  - Details: Involved in cryptocurrency discussions, notably with VanEck's Pranav Kanade
+- **Adams, Michael** (ENG, 2635)
+  - Details: Former editor for Forbes Advisor with expertise in finance and cryptocurrency
+- **Navara, David** (CZE, 2635)
+  - Details: Participated in tournaments with Bitcoin prizes
+- **Indjic, Aleksandar** (SRB, 2635)
+  - Details: Known for his involvement with blockchain technology in chess
+- **Gelfand, Boris** (ISR, 2630)
+  - Details: Competed in the FTX Crypto Cup, winning $220,000 plus $100,000 in Bitcoin
+- **Van Wely, Loek** (NED, 2628)
+  - Details: has been involved in discussions about cryptocurrency and Bitcoin
+
+### Content Creators (98)
+
+- **Carlsen, Magnus** (NOR, 2840)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+  - Follower size: large
+- **Nakamura, Hikaru** (USA, 2810)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+  - Follower size: large
+- **Caruana, Fabiano** (USA, 2795)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Keymer, Vincent** (GER, 2776)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Erigaisi Arjun** (IND, 2775)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Giri, Anish** (NED, 2760)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+  - Follower size: large
+- **Firouzja, Alireza** (FRA, 2759)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+  - Follower size: large
+- **Praggnanandhaa R** (IND, 2758)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Gukesh D** (IND, 2754)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+  - Follower size: large
+- **Wei, Yi** (CHN, 2754)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **So, Wesley** (USA, 2753)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Abdusattorov, Nodirbek** (UZB, 2751)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Anand, Viswanathan** (IND, 2743)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Rapport, Richard** (HUN, 2738)
+  - Twitch: unknown handle but confirmed presence, YouTube: unknown handle but confirmed presence
+- **Dominguez Perez, Leinier** (USA, 2738)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Vachier-Lagrave, Maxime** (FRA, 2734)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Duda, Jan-Krzysztof** (POL, 2731)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Le, Quang Liem** (VIE, 2731)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Mamedyarov, Shakhriyar** (AZE, 2730)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Aronian, Levon** (USA, 2729)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Sindarov, Javokhir** (UZB, 2726)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Niemann, Hans Moke** (USA, 2725)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+  - Follower size: large
+- **Nepomniachtchi, Ian** (RUS, 2723)
+  - Twitch: unknown handle but has channel, YouTube: unknown handle but streams
+  - Follower size: medium
+- **Yu, Yangyi** (CHN, 2717)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Nihal Sarin** (IND, 2716)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Liang, Awonder** (USA, 2713)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Andreikin, Dmitry** (FID, 2710)
+  - Twitch: inactive channel mentioned, YouTube: has YouTube videos with matches and highlights
+- **Maghsoodloo, Parham** (IRI, 2708)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Vidit, Santosh Gujrathi** (IND, 2708)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Fedoseev, Vladimir** (SLO, 2705)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Van Foreest, Jorden** (NED, 2703)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Aravindh, Chithambaram VR.** (IND, 2700)
+- **Tabatabaei, M. Amin** (IRI, 2700)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Esipenko, Andrey** (RUS, 2698)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Radjabov, Teimour** (AZE, 2692)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Yakubboev, Nodirbek** (UZB, 2691)
+  - Twitch: unknown handle, YouTube: unknown handle
+- **Sevian, Samuel** (USA, 2688)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Wang, Hao** (CHN, 2687)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Sarana, Alexey** (SRB, 2686)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Kovalenko, Igor** (UKR, 2682)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Svidler, Peter** (FID, 2682)
+  - Twitch: unknown handle but confirmed he streams on Twitch, YouTube: Kasparovchess channel
+- **Harikrishna, Pentala** (IND, 2679)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Bluebaum, Matthias** (GER, 2679)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Leko, Peter** (HUN, 2676)
+  - Twitch: unknown handle, YouTube: unknown handle
+- **Dubov, Daniil** (RUS, 2672)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+  - Follower size: medium
+- **Howell, David W L** (ENG, 2668)
+  - Twitch: HowellHub, YouTube: David Howell Chess
+- **Wojtaszek, Radoslaw** (POL, 2667)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Martinez Alcantara, Jose Eduardo** (MEX, 2667)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Donchenko, Alexander** (GER, 2665)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Bu, Xiangzhi** (CHN, 2665)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Kasimdzhanov, Rustam** (UZB, 2664)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Vitiugov, Nikita** (ENG, 2663)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Anton Guijarro, David** (ESP, 2662)
+  - Twitch: unknown, YouTube: unknown
+- **Grandelius, Nils** (SWE, 2660)
+  - Twitch: nilsgrandelius, YouTube: unknown, Twitter: unknown
+- **Erdogmus, Yagiz Kaan** (TUR, 2658)
+  - Twitch: unknown handle but has appeared on chess streams, YouTube: Yagiz Kaan Erdogmus
+- **Oparin, Grigoriy** (USA, 2658)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Xiong, Jeffery** (USA, 2656)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+  - Follower size: medium
+- **Nguyen, Thai Dai Van** (CZE, 2656)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Christiansen, Johan-Sebastian** (NOR, 2656)
+  - Twitch: gmjsc, YouTube: unknown, Twitter: unknown
+- **Saric, Ivan** (CRO, 2655)
+  - Twitch: unknown handle, YouTube: unknown handle
+- **Gledura, Benjamin** (HUN, 2654)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Morozevich, Alexander** (RUS, 2653)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Inarkiev, Ernesto** (RUS, 2653)
+  - Twitch: unknown handle, YouTube: unknown handle
+- **Murzin, Volodar** (FID, 2652)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Deac, Bogdan-Daniel** (ROU, 2652)
+  - Twitch: unknown, YouTube: unknown
+- **Shankland, Sam** (USA, 2651)
+  - Twitch: unknown handle but confirmed presence, YouTube: unknown handle but confirmed presence, Twitter: unknown
+- **Robson, Ray** (USA, 2650)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Eljanov, Pavel** (UKR, 2649)
+  - Twitch: eljanovlive, YouTube: has YouTube videos including playlist of his games
+- **Svane, Frederik** (GER, 2649)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Karthikeyan, Murali** (IND, 2648)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Theodorou, Nikolas** (GRE, 2648)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Grischuk, Alexander** (RUS, 2645)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Gurel, Ediz** (TUR, 2645)
+  - Twitch: unknown, YouTube: unknown
+- **Mamedov, Rauf** (AZE, 2645)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Vokhidov, Shamsiddin** (UZB, 2644)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Safarli, Eltaj** (AZE, 2644)
+  - Twitch: unknown handle, YouTube: unknown handle
+- **Vallejo Pons, Francisco** (ESP, 2644)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Lu, Shanglei** (CHN, 2643)
+  - Twitch: unknown handle but confirmed to stream, YouTube: unknown handle but has appeared in videos, Twitter: unknown
+- **Artemiev, Vladislav** (RUS, 2641)
+  - Twitch: unknown handle, YouTube: unknown handle
+- **Alekseenko, Kirill** (AUT, 2639)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Ivic, Velimir** (SRB, 2638)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Sadhwani, Raunak** (IND, 2638)
+  - Twitch: unknown, YouTube: unknown, Twitter: @sadhwani2005
+- **Tari, Aryan** (NOR, 2637)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Adams, Michael** (ENG, 2635)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Navara, David** (CZE, 2635)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Indjic, Aleksandar** (SRB, 2635)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Salem, A.R. Saleh** (UAE, 2635)
+  - Twitch: Salem_AR, YouTube: Salem Saleh, Twitter: SalemARSaleh
+  - Follower size: small
+- **L'Ami, Erwin** (NED, 2634)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Ponomariov, Ruslan** (UKR, 2633)
+  - Twitch: ruslanponomariov, YouTube: unknown
+- **Bacrot, Etienne** (FRA, 2631)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Gelfand, Boris** (ISR, 2630)
+  - Twitch: unknown handle, YouTube: unknown handle
+- **Kollars, Dmitrij** (GER, 2630)
+  - Twitch: dmitrijkollars, YouTube: true, Twitter: unknown
+- **Mishra, Abhimanyu** (USA, 2629)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Chigaev, Maksim** (ESP, 2628)
+  - Twitch: fandorine96, YouTube: @fandorine96
+  - Follower size: medium
+- **Pranesh M** (IND, 2628)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Bjerre, Jonas Buhl** (DEN, 2628)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Van Wely, Loek** (NED, 2628)
+  - Twitch: unknown, YouTube: unknown, Twitter: unknown
+- **Suleymanli, Aydin** (AZE, 2628)
+  - YouTube: unknown
+
+### Players with Known Feb/March 2026 Conflicts (3)
+
+- **Anand, Viswanathan** (IND, 2743)
+  - Commitments: Tata Steel India Blitz and Rapid in early 2026
+- **Tari, Aryan** (NOR, 2637)
+  - Commitments: Pan-Am Intercollegiate in February 2026
+- **Bacrot, Etienne** (FRA, 2631)
+  - Commitments: Djerba International Chess Festival in February 2026
+
+---
+
+## Players by Federation (Top 10)
+
+- USA: 13 players
+- IND: 12 players
+- RUS: 7 players
+- GER: 5 players
+- CHN: 5 players
+- UZB: 5 players
+- AZE: 5 players
+- NED: 4 players
+- ENG: 4 players
+- NOR: 3 players
+
+---
+
+_This report was auto-generated. AI summaries are interpretive and should be verified._

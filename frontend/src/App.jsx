@@ -808,7 +808,7 @@ function WhatsThePoint({ onClose }) {
       <div className="point-section highlight">
         <h3>🤝 The Win-Win</h3>
         <p>
-          This isn't just gambling — it's a <strong>coordination mechanism</strong>. The prediction market:
+          This market is a <strong>coordination mechanism</strong>. This prediction market:
         </p>
         <ul>
           <li>Gives players a financial reason to commit early</li>
