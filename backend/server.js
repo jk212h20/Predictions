@@ -445,7 +445,108 @@ app.post('/api/auth/merge-accounts', authMiddleware, async (req, res) => {
 app.get('/api/user/me', authMiddleware, (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json(user);
+  // Don't send password_hash to client
+  const { password_hash: _, ...safeUser } = user;
+  res.json(safeUser);
+});
+
+// Update user profile
+app.put('/api/user/profile', authMiddleware, async (req, res) => {
+  const { username, email } = req.body;
+  const updates = [];
+  const params = [];
+  
+  // Validate and prepare username update
+  if (username !== undefined) {
+    if (username.length < 2 || username.length > 30) {
+      return res.status(400).json({ error: 'Username must be 2-30 characters' });
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
+      return res.status(400).json({ error: 'Username can only contain letters, numbers, underscores, and hyphens' });
+    }
+    // Check if username is taken
+    const existing = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(username, req.user.id);
+    if (existing) {
+      return res.status(400).json({ error: 'Username is already taken' });
+    }
+    updates.push('username = ?');
+    params.push(username);
+  }
+  
+  // Validate and prepare email update
+  if (email !== undefined) {
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+    // Check if email is taken
+    if (email) {
+      const existing = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(email, req.user.id);
+      if (existing) {
+        return res.status(400).json({ error: 'Email is already in use by another account' });
+      }
+    }
+    updates.push('email = ?');
+    params.push(email || null);
+  }
+  
+  if (updates.length === 0) {
+    return res.status(400).json({ error: 'No valid fields to update' });
+  }
+  
+  params.push(req.user.id);
+  db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const { password_hash: _, ...safeUser } = user;
+  res.json(safeUser);
+});
+
+// Change password
+app.put('/api/user/password', authMiddleware, async (req, res) => {
+  const { current_password, new_password } = req.body;
+  
+  if (!new_password || new_password.length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters' });
+  }
+  
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  
+  // If user has existing password, verify current password
+  if (user.password_hash) {
+    if (!current_password) {
+      return res.status(400).json({ error: 'Current password is required' });
+    }
+    const isMatch = await bcrypt.compare(current_password, user.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+  }
+  
+  // Hash new password
+  const salt = await bcrypt.genSalt(10);
+  const password_hash = await bcrypt.hash(new_password, salt);
+  
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(password_hash, req.user.id);
+  
+  res.json({ success: true, message: 'Password updated successfully' });
+});
+
+// Unlink Lightning wallet
+app.post('/api/user/unlink-lightning', authMiddleware, (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  
+  // Ensure user has another login method before unlinking
+  if (!user.email && !user.google_id) {
+    return res.status(400).json({ 
+      error: 'Cannot unlink Lightning wallet - you need email or Google login as backup' 
+    });
+  }
+  
+  db.prepare('UPDATE users SET lightning_pubkey = NULL WHERE id = ?').run(req.user.id);
+  
+  const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const { password_hash: _, ...safeUser } = updatedUser;
+  res.json(safeUser);
 });
 
 app.get('/api/user/balance', authMiddleware, (req, res) => {

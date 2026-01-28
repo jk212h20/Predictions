@@ -66,12 +66,16 @@ function useAuth() {
     }
   };
 
-  return { user, loading, login, register, googleLogin, lightningLogin, logout, refreshBalance };
+  const updateUser = (updatedUser) => {
+    setUser(updatedUser);
+  };
+
+  return { user, loading, login, register, googleLogin, lightningLogin, logout, refreshBalance, updateUser };
 }
 
 // ==================== COMPONENTS ====================
 
-function Header({ user, onLogout, onShowWallet, onShowPortfolio, onShowAdmin, onShowBotAdmin, onShowLogin }) {
+function Header({ user, onLogout, onShowWallet, onShowPortfolio, onShowProfile, onShowAdmin, onShowBotAdmin, onShowLogin }) {
   return (
     <header className="header">
       <div className="header-left">
@@ -87,7 +91,9 @@ function Header({ user, onLogout, onShowWallet, onShowPortfolio, onShowAdmin, on
             <button className="btn btn-small btn-portfolio" onClick={onShowPortfolio}>
               📊 Portfolio
             </button>
-            <span className="username">{user.username || user.email}</span>
+            <button className="btn btn-small btn-profile" onClick={onShowProfile}>
+              👤 {user.username || user.email?.split('@')[0] || 'Profile'}
+            </button>
             {user.is_admin === 1 && (
               <>
                 <button className="btn btn-small btn-bot" onClick={onShowBotAdmin}>🤖 Bot</button>
@@ -1404,6 +1410,436 @@ function PortfolioModal({ user, onClose, onRefresh }) {
   );
 }
 
+// Profile Modal with account management
+function ProfileModal({ user, onClose, onUserUpdate }) {
+  const [activeTab, setActiveTab] = useState('info');
+  const [username, setUsername] = useState(user.username || '');
+  const [email, setEmail] = useState(user.email || '');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [showLinkLightning, setShowLinkLightning] = useState(false);
+
+  const handleSaveProfile = async () => {
+    setError('');
+    setSuccess('');
+    setLoading(true);
+    
+    try {
+      const updates = {};
+      if (username !== user.username) updates.username = username;
+      if (email !== user.email) updates.email = email || null;
+      
+      if (Object.keys(updates).length === 0) {
+        setError('No changes to save');
+        setLoading(false);
+        return;
+      }
+      
+      const updatedUser = await api.updateProfile(updates);
+      onUserUpdate(updatedUser);
+      setSuccess('Profile updated successfully!');
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  };
+
+  const handleChangePassword = async () => {
+    setError('');
+    setSuccess('');
+    
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+    
+    if (newPassword.length < 6) {
+      setError('Password must be at least 6 characters');
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      await api.changePassword(currentPassword || null, newPassword);
+      setSuccess('Password updated successfully!');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  };
+
+  const handleUnlinkLightning = async () => {
+    if (!confirm('Are you sure you want to unlink your Lightning wallet? You will need email/password to log in.')) {
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const updatedUser = await api.unlinkLightning();
+      onUserUpdate(updatedUser);
+      setSuccess('Lightning wallet unlinked successfully');
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  };
+
+  const shortenPubkey = (pubkey) => {
+    if (!pubkey) return null;
+    return `${pubkey.slice(0, 8)}...${pubkey.slice(-8)}`;
+  };
+
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+    alert('Copied to clipboard!');
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-profile" onClick={e => e.stopPropagation()}>
+        <h2>👤 Profile Settings</h2>
+        
+        <div className="profile-tabs">
+          <button 
+            className={activeTab === 'info' ? 'active' : ''} 
+            onClick={() => setActiveTab('info')}
+          >
+            Account Info
+          </button>
+          <button 
+            className={activeTab === 'security' ? 'active' : ''} 
+            onClick={() => setActiveTab('security')}
+          >
+            Security
+          </button>
+          <button 
+            className={activeTab === 'connections' ? 'active' : ''} 
+            onClick={() => setActiveTab('connections')}
+          >
+            Connections
+          </button>
+        </div>
+
+        {error && <div className="auth-error">{error}</div>}
+        {success && <div className="auth-success">{success}</div>}
+
+        {activeTab === 'info' && (
+          <div className="profile-section">
+            <div className="profile-field">
+              <label>Username</label>
+              <input
+                type="text"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                placeholder="Enter username"
+              />
+              <span className="field-hint">2-30 characters, letters, numbers, underscores, hyphens</span>
+            </div>
+
+            <div className="profile-field">
+              <label>Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="Enter email (optional)"
+              />
+              <span className="field-hint">Used for login and notifications</span>
+            </div>
+
+            <div className="profile-field readonly">
+              <label>Account Number</label>
+              <div className="field-value">#{user.account_number || 'N/A'}</div>
+            </div>
+
+            <div className="profile-field readonly">
+              <label>Member Since</label>
+              <div className="field-value">
+                {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'Unknown'}
+              </div>
+            </div>
+
+            <button 
+              className="btn btn-primary"
+              onClick={handleSaveProfile}
+              disabled={loading}
+            >
+              {loading ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        )}
+
+        {activeTab === 'security' && (
+          <div className="profile-section">
+            <h3>{user.password_hash ? 'Change Password' : 'Set Password'}</h3>
+            <p className="section-hint">
+              {user.password_hash 
+                ? 'Update your login password'
+                : 'Set a password to enable email login'}
+            </p>
+
+            {user.password_hash && (
+              <div className="profile-field">
+                <label>Current Password</label>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={e => setCurrentPassword(e.target.value)}
+                  placeholder="Enter current password"
+                />
+              </div>
+            )}
+
+            <div className="profile-field">
+              <label>New Password</label>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+                placeholder="Enter new password"
+                minLength={6}
+              />
+            </div>
+
+            <div className="profile-field">
+              <label>Confirm New Password</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                placeholder="Confirm new password"
+                minLength={6}
+              />
+            </div>
+
+            <button 
+              className="btn btn-primary"
+              onClick={handleChangePassword}
+              disabled={loading || !newPassword || !confirmPassword}
+            >
+              {loading ? 'Updating...' : (user.password_hash ? 'Change Password' : 'Set Password')}
+            </button>
+          </div>
+        )}
+
+        {activeTab === 'connections' && (
+          <div className="profile-section">
+            <h3>Login Methods</h3>
+            
+            <div className="connection-item">
+              <div className="connection-icon">⚡</div>
+              <div className="connection-info">
+                <div className="connection-name">Lightning Wallet</div>
+                {user.lightning_pubkey ? (
+                  <>
+                    <div className="connection-status connected">
+                      ✓ Connected
+                    </div>
+                    <div 
+                      className="connection-detail pubkey"
+                      onClick={() => copyToClipboard(user.lightning_pubkey)}
+                      title="Click to copy full pubkey"
+                    >
+                      {shortenPubkey(user.lightning_pubkey)}
+                    </div>
+                  </>
+                ) : (
+                  <div className="connection-status disconnected">
+                    Not connected
+                  </div>
+                )}
+              </div>
+              <div className="connection-action">
+                {user.lightning_pubkey ? (
+                  <button 
+                    className="btn btn-small btn-outline btn-danger"
+                    onClick={handleUnlinkLightning}
+                    disabled={loading || (!user.email && !user.google_id)}
+                    title={(!user.email && !user.google_id) ? 'Add email first' : 'Unlink wallet'}
+                  >
+                    Unlink
+                  </button>
+                ) : (
+                  <button 
+                    className="btn btn-small btn-lightning"
+                    onClick={() => setShowLinkLightning(true)}
+                  >
+                    Link Wallet
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="connection-item">
+              <div className="connection-icon">📧</div>
+              <div className="connection-info">
+                <div className="connection-name">Email</div>
+                {user.email ? (
+                  <>
+                    <div className="connection-status connected">
+                      ✓ {user.email}
+                    </div>
+                    <div className="connection-detail">
+                      {user.password_hash ? 'Password set' : 'No password (Google only)'}
+                    </div>
+                  </>
+                ) : (
+                  <div className="connection-status disconnected">
+                    Not set
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {user.google_id && (
+              <div className="connection-item">
+                <div className="connection-icon">🔵</div>
+                <div className="connection-info">
+                  <div className="connection-name">Google</div>
+                  <div className="connection-status connected">
+                    ✓ Connected
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!user.email && !user.google_id && user.lightning_pubkey && (
+              <div className="connection-warning">
+                ⚠️ Add an email address to have a backup login method
+              </div>
+            )}
+          </div>
+        )}
+
+        <button className="btn btn-outline modal-close" onClick={onClose}>Close</button>
+
+        {showLinkLightning && (
+          <LinkLightningModal 
+            onClose={() => setShowLinkLightning(false)}
+            onSuccess={(updatedUser) => {
+              onUserUpdate(updatedUser);
+              setShowLinkLightning(false);
+              setSuccess('Lightning wallet linked successfully!');
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Link Lightning Modal (for existing users)
+function LinkLightningModal({ onClose, onSuccess }) {
+  const [challenge, setChallenge] = useState(null);
+  const [status, setStatus] = useState('loading');
+  const [error, setError] = useState('');
+  const pollingRef = useRef(null);
+
+  useEffect(() => {
+    generateChallenge();
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
+
+  const generateChallenge = async () => {
+    setStatus('loading');
+    setError('');
+    try {
+      const data = await api.getLnurlAuthChallenge();
+      setChallenge(data);
+      setStatus('ready');
+      startPolling(data.k1);
+    } catch (err) {
+      setError(err.message);
+      setStatus('error');
+    }
+  };
+
+  const startPolling = (k1) => {
+    pollingRef.current = setInterval(async () => {
+      try {
+        const statusData = await api.getLnurlAuthStatus(k1);
+        if (statusData.status === 'verified') {
+          clearInterval(pollingRef.current);
+          setStatus('linking');
+          // Link to current account
+          const result = await api.linkLightning(k1);
+          onSuccess(result.user);
+        } else if (statusData.status === 'expired') {
+          clearInterval(pollingRef.current);
+          setError('Challenge expired. Please try again.');
+          setStatus('error');
+        }
+      } catch (err) {
+        console.error('Polling error:', err);
+      }
+    }, 2000);
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal lightning-modal" onClick={e => e.stopPropagation()}>
+        <h2>⚡ Link Lightning Wallet</h2>
+        
+        {status === 'loading' && (
+          <div className="lightning-loading">
+            <div className="spinner"></div>
+            <p>Generating challenge...</p>
+          </div>
+        )}
+
+        {status === 'error' && (
+          <div className="lightning-error">
+            <p className="auth-error">{error}</p>
+            <button className="btn btn-primary" onClick={generateChallenge}>
+              Try Again
+            </button>
+          </div>
+        )}
+
+        {status === 'ready' && challenge && (
+          <div className="lightning-qr-container">
+            <p className="lightning-instructions">
+              Scan with your Lightning wallet to link it to your account
+            </p>
+            
+            <div className="qr-wrapper">
+              <QRCodeSVG 
+                value={challenge.uri}
+                size={200}
+                level="M"
+                includeMargin={true}
+              />
+            </div>
+
+            <div className="lightning-waiting">
+              <div className="pulse-dot"></div>
+              <span>Waiting for wallet signature...</span>
+            </div>
+          </div>
+        )}
+
+        {status === 'linking' && (
+          <div className="lightning-loading">
+            <div className="spinner"></div>
+            <p>Linking wallet to your account...</p>
+          </div>
+        )}
+
+        <button className="btn btn-outline modal-close" onClick={onClose}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 function AdminPanel({ user, onClose }) {
   const [markets, setMarkets] = useState([]);
   const [selectedMarket, setSelectedMarket] = useState(null);
@@ -1544,11 +1980,12 @@ function AdminPanel({ user, onClose }) {
 
 // ==================== MAIN APP ====================
 function App() {
-  const { user, loading, login, register, googleLogin, lightningLogin, logout, refreshBalance } = useAuth();
+  const { user, loading, login, register, googleLogin, lightningLogin, logout, refreshBalance, updateUser } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
   const [showLightningLogin, setShowLightningLogin] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
   const [showPortfolio, setShowPortfolio] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showBotAdmin, setShowBotAdmin] = useState(false);
   const [showWhatsThePoint, setShowWhatsThePoint] = useState(false);
@@ -1611,6 +2048,7 @@ function App() {
         onLogout={logout}
         onShowWallet={() => setShowWallet(true)}
         onShowPortfolio={() => setShowPortfolio(true)}
+        onShowProfile={() => setShowProfile(true)}
         onShowAdmin={() => setShowAdmin(true)}
         onShowBotAdmin={() => setShowBotAdmin(true)}
         onShowLogin={() => setShowLogin(true)}
@@ -1695,6 +2133,10 @@ function App() {
 
       {showAdmin && user?.is_admin === 1 && (
         <AdminPanel user={user} onClose={() => setShowAdmin(false)} />
+      )}
+
+      {showProfile && user && (
+        <ProfileModal user={user} onClose={() => setShowProfile(false)} onUserUpdate={updateUser} />
       )}
 
       {showBotAdmin && user?.is_admin === 1 && (

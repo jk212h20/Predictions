@@ -80,6 +80,27 @@ export const getUser = () =>
 export const getBalance = () =>
   fetch(`${API_BASE}/user/balance`, { headers: getHeaders() }).then(handleResponse);
 
+// Profile management
+export const updateProfile = (data) =>
+  fetch(`${API_BASE}/user/profile`, {
+    method: 'PUT',
+    headers: getHeaders(),
+    body: JSON.stringify(data),
+  }).then(handleResponse);
+
+export const changePassword = (current_password, new_password) =>
+  fetch(`${API_BASE}/user/password`, {
+    method: 'PUT',
+    headers: getHeaders(),
+    body: JSON.stringify({ current_password, new_password }),
+  }).then(handleResponse);
+
+export const unlinkLightning = () =>
+  fetch(`${API_BASE}/user/unlink-lightning`, {
+    method: 'POST',
+    headers: getHeaders(),
+  }).then(handleResponse);
+
 // Markets
 export const getGrandmasters = () =>
   fetch(`${API_BASE}/grandmasters`).then(handleResponse);
