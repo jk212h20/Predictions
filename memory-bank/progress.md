@@ -121,6 +121,32 @@ Complete "Login with Lightning" implementation:
                     └─────────────────┘    └─────────────────┘
 ```
 
+## Railway Operations Reference
+
+**Modifying the production database on Railway:**
+
+1. **Local vs Production databases are SEPARATE** - Changes to `backend/predictions.db` locally do NOT affect Railway. Railway uses a volume mount at `/data/predictions.db`.
+
+2. **`railway run` does NOT have filesystem access** to the Railway container. It runs commands locally with Railway's environment variables - can't access the SQLite file on the server.
+
+3. **`railway ssh` IS the correct approach**:
+   ```bash
+   # SSH into the container
+   railway ssh -s <service-name>
+   
+   # Run a command directly without interactive shell:
+   railway ssh -s <service-name> -- <command>
+   
+   # Example: Run a script
+   railway ssh -s Predictions -- node backend/make-admin.js user@email.com
+   ```
+
+4. **Create utility scripts** (like `make-admin.js`) and push them to the repo, then run via SSH. This is more reliable than trying to run raw SQL remotely.
+
+5. **JWT tokens cache user data** - After promoting a user to admin, they must log out and back in to get a new token with `is_admin: true`.
+
+6. **CLI commands available**: `railway ssh`, `railway logs`, `railway shell` (local env vars only), `railway connect` (database services like Postgres)
+
 ## Configuration
 
 **Default Settings**:
