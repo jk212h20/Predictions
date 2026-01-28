@@ -8,25 +8,23 @@ const crypto = require('crypto');
 const secp256k1 = require('secp256k1');
 const { bech32 } = require('bech32');
 
-// ==================== VOLTAGE API CONFIGURATION ====================
+// ==================== LND REST API CONFIGURATION ====================
 
-const VOLTAGE_API_BASE = 'https://api.voltage.cloud/v1';
-const VOLTAGE_API_KEY = process.env.VOLTAGE_API_KEY;
-const VOLTAGE_TEAM_ID = process.env.VOLTAGE_TEAM_ID;
+const LND_REST_URL = process.env.LND_REST_URL;
+const LND_MACAROON = process.env.LND_MACAROON;
 
-// Check if Voltage is configured
+// Check if LND is configured
 const isVoltageConfigured = () => {
-  return !!(VOLTAGE_API_KEY && VOLTAGE_TEAM_ID);
+  return !!(LND_REST_URL && LND_MACAROON);
 };
 
-// Make authenticated request to Voltage API
-async function voltageRequest(endpoint, options = {}) {
-  const url = `${VOLTAGE_API_BASE}${endpoint}`;
+// Make authenticated request to LND REST API
+async function lndRequest(endpoint, options = {}) {
+  const url = `${LND_REST_URL}${endpoint}`;
   
   const headers = {
     'Content-Type': 'application/json',
-    'X-Api-Key': VOLTAGE_API_KEY,
-    'X-Team-Id': VOLTAGE_TEAM_ID,
+    'Grpc-Metadata-macaroon': LND_MACAROON,
   };
   
   const response = await fetch(url, {
@@ -40,8 +38,8 @@ async function voltageRequest(endpoint, options = {}) {
   const data = await response.json();
   
   if (!response.ok) {
-    console.error('Voltage API error:', data);
-    throw new Error(data.message || data.error || `Voltage API error: ${response.status}`);
+    console.error('LND API error:', data);
+    throw new Error(data.message || data.error || `LND API error: ${response.status}`);
   }
   
   return data;
@@ -329,24 +327,28 @@ const mockPayments = new Map();
  * @returns {Object} Invoice object with payment_request, payment_hash, etc.
  */
 async function createInvoice(amountSats, memo = 'Deposit to Bitcoin Chess 960 Predictions') {
-  // Use real Voltage API if configured
+  // Use real LND API if configured
   if (isVoltageConfigured()) {
     try {
-      console.log(`Creating Voltage invoice for ${amountSats} sats...`);
+      console.log(`Creating LND invoice for ${amountSats} sats...`);
       
-      const response = await voltageRequest('/node/invoice', {
+      // LND REST API: POST /v1/invoices
+      const response = await lndRequest('/v1/invoices', {
         method: 'POST',
         body: JSON.stringify({
-          amount_sats: amountSats,
+          value: amountSats.toString(), // LND expects string
           memo: memo,
-          expiry: 3600, // 1 hour expiry
+          expiry: '3600', // 1 hour expiry
         }),
       });
       
-      console.log('Voltage invoice created:', response.payment_hash);
+      // LND returns r_hash as base64, we need to convert to hex for our use
+      const paymentHashHex = Buffer.from(response.r_hash, 'base64').toString('hex');
+      
+      console.log('LND invoice created:', paymentHashHex);
       
       return {
-        payment_hash: response.payment_hash,
+        payment_hash: paymentHashHex,
         payment_request: response.payment_request,
         amount_sats: amountSats,
         memo,
@@ -356,7 +358,7 @@ async function createInvoice(amountSats, memo = 'Deposit to Bitcoin Chess 960 Pr
         is_real: true, // Flag to indicate this is a real invoice
       };
     } catch (err) {
-      console.error('Failed to create Voltage invoice:', err);
+      console.error('Failed to create LND invoice:', err);
       throw new Error(`Failed to create Lightning invoice: ${err.message}`);
     }
   }
@@ -386,17 +388,18 @@ async function createInvoice(amountSats, memo = 'Deposit to Bitcoin Chess 960 Pr
  * @returns {Object} Invoice status object
  */
 async function checkInvoice(paymentHash) {
-  // Use real Voltage API if configured
+  // Use real LND API if configured
   if (isVoltageConfigured()) {
     try {
-      console.log(`Checking Voltage invoice status: ${paymentHash}`);
+      console.log(`Checking LND invoice status: ${paymentHash}`);
       
-      const response = await voltageRequest(`/node/invoice/${paymentHash}`, {
+      // LND REST API: GET /v1/invoice/{r_hash_str}
+      // r_hash needs to be hex or base64 URL-safe encoded
+      const response = await lndRequest(`/v1/invoice/${paymentHash}`, {
         method: 'GET',
       });
       
-      // Map Voltage status to our format
-      // Voltage returns: { settled: boolean, amt_paid_sat: number, ... }
+      // LND returns: { settled: boolean, amt_paid_sat: string, ... }
       const status = response.settled ? 'paid' : 'pending';
       
       console.log(`Invoice ${paymentHash} status: ${status}`);
@@ -404,12 +407,14 @@ async function checkInvoice(paymentHash) {
       return {
         payment_hash: paymentHash,
         status: status,
-        amount_sats: response.amt_paid_sat || response.value,
-        settled_at: response.settle_date ? new Date(response.settle_date * 1000).toISOString() : null,
+        amount_sats: parseInt(response.amt_paid_sat || response.value || '0'),
+        settled_at: response.settle_date && response.settle_date !== '0' 
+          ? new Date(parseInt(response.settle_date) * 1000).toISOString() 
+          : null,
         is_real: true,
       };
     } catch (err) {
-      console.error('Failed to check Voltage invoice:', err);
+      console.error('Failed to check LND invoice:', err);
       // If not found, return not_found status
       if (err.message.includes('not found') || err.message.includes('404')) {
         return { status: 'not_found', payment_hash: paymentHash };
@@ -450,29 +455,34 @@ function simulatePayment(paymentHash) {
 async function payInvoice(paymentRequest, amountSats) {
   if (isVoltageConfigured()) {
     try {
-      console.log(`Paying invoice via Voltage: ${amountSats} sats`);
+      console.log(`Paying invoice via LND: ${amountSats} sats`);
       
-      const response = await voltageRequest('/node/pay', {
+      // LND REST API: POST /v1/channels/transactions
+      const response = await lndRequest('/v1/channels/transactions', {
         method: 'POST',
         body: JSON.stringify({
           payment_request: paymentRequest,
-          // Optional: timeout_seconds, fee_limit_sat
         }),
       });
       
-      console.log('Payment sent:', response.payment_hash);
+      const paymentHashHex = response.payment_hash 
+        ? Buffer.from(response.payment_hash, 'base64').toString('hex')
+        : null;
+      
+      console.log('Payment sent:', paymentHashHex);
       
       return {
-        id: response.payment_hash,
+        id: paymentHashHex,
         payment_request: paymentRequest,
-        amount_sats: response.value_sat || amountSats,
-        fee_sats: response.fee_sat || 0,
-        status: response.status === 'SUCCEEDED' ? 'completed' : response.status,
+        amount_sats: parseInt(response.value_sat || amountSats),
+        fee_sats: parseInt(response.fee_sat || '0'),
+        status: response.payment_error ? 'failed' : 'completed',
+        error: response.payment_error || null,
         created_at: new Date().toISOString(),
         is_real: true,
       };
     } catch (err) {
-      console.error('Failed to pay invoice via Voltage:', err);
+      console.error('Failed to pay invoice via LND:', err);
       throw new Error(`Payment failed: ${err.message}`);
     }
   }
@@ -499,7 +509,8 @@ async function payInvoice(paymentRequest, amountSats) {
 async function getNodeInfo() {
   if (isVoltageConfigured()) {
     try {
-      const response = await voltageRequest('/node/info', {
+      // LND REST API: GET /v1/getinfo
+      const response = await lndRequest('/v1/getinfo', {
         method: 'GET',
       });
       
@@ -507,10 +518,12 @@ async function getNodeInfo() {
         pubkey: response.identity_pubkey,
         alias: response.alias || 'Bitcoin Chess 960 Predictions',
         network: response.chains?.[0]?.network || 'mainnet',
+        synced: response.synced_to_chain,
+        block_height: response.block_height,
         is_real: true,
       };
     } catch (err) {
-      console.error('Failed to get Voltage node info:', err);
+      console.error('Failed to get LND node info:', err);
       // Return mock info as fallback
     }
   }
