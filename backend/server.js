@@ -4,6 +4,8 @@ const cors = require('cors');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const { OAuth2Client } = require('google-auth-library');
 const db = require('./database');
 const lightning = require('./lightning');
 const { seed } = require('./seed');
@@ -50,6 +52,95 @@ function adminMiddleware(req, res, next) {
 
 // ==================== AUTH ROUTES ====================
 
+// Email registration with password
+app.post('/api/auth/register', async (req, res) => {
+  const { email, password, username } = req.body;
+  
+  // Validation
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+  
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+  
+  // Check if email already exists
+  const existing = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (existing) {
+    return res.status(400).json({ error: 'An account with this email already exists' });
+  }
+  
+  try {
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const password_hash = await bcrypt.hash(password, salt);
+    
+    // Create user
+    const id = uuidv4();
+    db.prepare(`
+      INSERT INTO users (id, email, username, password_hash, balance_sats, email_verified)
+      VALUES (?, ?, ?, ?, 100000, 0)
+    `).run(id, email, username || email.split('@')[0], password_hash);
+    
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    
+    const token = jwt.sign(
+      { id: user.id, email: user.email, is_admin: user.is_admin },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    // Don't send password_hash to client
+    const { password_hash: _, ...safeUser } = user;
+    res.json({ token, user: safeUser });
+  } catch (err) {
+    console.error('Registration error:', err);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+// Email login with password
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+  
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  
+  if (!user) {
+    return res.status(401).json({ error: 'Invalid email or password' });
+  }
+  
+  // Check if user has a password (might have signed up via Google only)
+  if (!user.password_hash) {
+    return res.status(401).json({ error: 'This account uses Google sign-in. Please login with Google.' });
+  }
+  
+  try {
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    
+    const token = jwt.sign(
+      { id: user.id, email: user.email, is_admin: user.is_admin },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    // Don't send password_hash to client
+    const { password_hash: _, ...safeUser } = user;
+    res.json({ token, user: safeUser });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
 // Mock login (for development) - creates or returns user
 app.post('/api/auth/demo-login', (req, res) => {
   const { email, username } = req.body;
@@ -72,6 +163,69 @@ app.post('/api/auth/demo-login', (req, res) => {
   );
   
   res.json({ token, user: { ...user, balance_sats: user.balance_sats } });
+});
+
+// Google OAuth login
+app.post('/api/auth/google', async (req, res) => {
+  const { credential } = req.body;
+  
+  if (!credential) {
+    return res.status(400).json({ error: 'No credential provided' });
+  }
+  
+  const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+  if (!GOOGLE_CLIENT_ID) {
+    return res.status(500).json({ error: 'Google OAuth not configured' });
+  }
+  
+  try {
+    const client = new OAuth2Client(GOOGLE_CLIENT_ID);
+    const ticket = await client.verifyIdToken({
+      idToken: credential,
+      audience: GOOGLE_CLIENT_ID,
+    });
+    
+    const payload = ticket.getPayload();
+    const { email, name, picture, sub: googleId } = payload;
+    
+    // Find or create user
+    let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    
+    if (!user) {
+      // Create new user
+      const id = uuidv4();
+      db.prepare(`
+        INSERT INTO users (id, email, username, google_id, avatar_url, balance_sats)
+        VALUES (?, ?, ?, ?, ?, 100000)
+      `).run(id, email, name || email.split('@')[0], googleId, picture);
+      user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    } else if (!user.google_id) {
+      // Link existing account to Google
+      db.prepare('UPDATE users SET google_id = ?, avatar_url = ? WHERE id = ?')
+        .run(googleId, picture, user.id);
+      user = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+    }
+    
+    const token = jwt.sign(
+      { id: user.id, email: user.email, is_admin: user.is_admin },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    res.json({ token, user: { ...user, balance_sats: user.balance_sats } });
+  } catch (err) {
+    console.error('Google auth error:', err);
+    res.status(401).json({ error: 'Invalid Google credential' });
+  }
+});
+
+// Get Google Client ID for frontend
+app.get('/api/auth/google-client-id', (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    return res.status(404).json({ error: 'Google OAuth not configured' });
+  }
+  res.json({ clientId });
 });
 
 // LNURL-auth challenge
@@ -604,7 +758,7 @@ app.get('/api/health', (req, res) => {
 
 // Serve frontend for any non-API routes in production
 if (process.env.NODE_ENV === 'production') {
-  app.get('*', (req, res) => {
+  app.get('/{*splat}', (req, res) => {
     res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
   });
 }
