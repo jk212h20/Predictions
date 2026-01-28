@@ -642,20 +642,24 @@ function setWeightLock(marketId, locked) {
 
 /**
  * Get bot configuration
+ * AUTO-CORRECTION: If max_acceptable_loss > user balance, auto-reduce it
  */
 function getConfig() {
   let config = db.prepare('SELECT * FROM bot_config WHERE id = ?').get('default');
   if (!config) {
     // Initialize default config if not exists
-    const adminUser = db.prepare('SELECT id FROM users WHERE is_admin = 1').get();
+    const adminUser = db.prepare('SELECT id, balance_sats FROM users WHERE is_admin = 1').get();
     if (!adminUser) {
       throw new Error('No admin user found. Cannot initialize bot.');
     }
     
+    // Set max_loss to user's balance (never higher)
+    const initialMaxLoss = Math.min(10000000, adminUser.balance_sats);
+    
     db.prepare(`
       INSERT INTO bot_config (id, bot_user_id, max_acceptable_loss, total_liquidity, threshold_percent, global_multiplier, is_active)
-      VALUES ('default', ?, 10000000, 100000000, 1.0, 1.0, 0)
-    `).run(adminUser.id);
+      VALUES ('default', ?, ?, 100000000, 1.0, 1.0, 0)
+    `).run(adminUser.id, initialMaxLoss);
     
     // Initialize exposure tracking
     db.prepare(`
@@ -665,6 +669,28 @@ function getConfig() {
     
     config = db.prepare('SELECT * FROM bot_config WHERE id = ?').get('default');
   }
+  
+  // AUTO-CORRECTION: Check if max_loss exceeds user's current balance
+  const botUser = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(config.bot_user_id);
+  if (botUser && config.max_acceptable_loss > botUser.balance_sats) {
+    // Auto-reduce max_loss to match balance
+    const correctedMaxLoss = botUser.balance_sats;
+    db.prepare(`
+      UPDATE bot_config 
+      SET max_acceptable_loss = ?, updated_at = datetime('now')
+      WHERE id = 'default'
+    `).run(correctedMaxLoss);
+    
+    logBotAction('auto_correct_max_loss', JSON.stringify({
+      old_max_loss: config.max_acceptable_loss,
+      new_max_loss: correctedMaxLoss,
+      user_balance: botUser.balance_sats,
+      reason: 'max_loss exceeded user balance'
+    }));
+    
+    config.max_acceptable_loss = correctedMaxLoss;
+  }
+  
   return config;
 }
 
@@ -828,10 +854,13 @@ function setMarketOverride(marketId, overrideType, options = {}) {
 /**
  * Get effective curve for a specific market (applying overrides and global multiplier)
  * 
- * NEW LOGIC: Uses total_liquidity × market_weight × shape_weight to calculate amounts
- * The curve shape is just proportions, not absolute amounts
+ * FIXED: Now uses actual budget (user balance) instead of hardcoded total_liquidity
+ * 
+ * @param {string} marketId - Market to get curve for
+ * @param {string} curveType - 'buy' or 'sell'
+ * @param {number|null} totalBudget - Total budget to distribute (if null, uses config.total_liquidity)
  */
-function getEffectiveCurve(marketId, curveType = 'buy') {
+function getEffectiveCurve(marketId, curveType = 'buy', totalBudget = null) {
   const config = getConfig();
   const market = db.prepare('SELECT * FROM markets WHERE id = ?').get(marketId);
   if (!market) return null;
@@ -853,7 +882,7 @@ function getEffectiveCurve(marketId, curveType = 'buy') {
     shape = defaultShape.normalized_points;
   }
   
-  // Get market weight (what fraction of total liquidity goes to this market)
+  // Get market weight (what fraction of budget goes to this market)
   let weightRecord = getMarketWeight(marketId);
   
   // Auto-initialize weights if none exist for this market
@@ -869,17 +898,16 @@ function getEffectiveCurve(marketId, curveType = 'buy') {
     return null;
   }
   
-  // Apply multipliers
+  // Apply market-specific multiplier
   const marketMultiplier = override?.override_type === 'multiply' ? override.multiplier : 1.0;
-  const effectiveMultiplier = config.global_multiplier * marketMultiplier;
   
-  // Apply pullback reduction
-  const exposure = getExposure();
-  const pullbackRatio = calculatePullbackRatio(exposure.total_at_risk, config.max_acceptable_loss);
+  // Use provided budget or fall back to config.total_liquidity
+  const baseBudget = totalBudget !== null ? totalBudget : config.total_liquidity;
   
   // Calculate budget for this market
-  // total_liquidity × market_weight × global_multiplier × market_multiplier × pullback_ratio
-  const marketBudget = config.total_liquidity * marketWeight * effectiveMultiplier * pullbackRatio;
+  // baseBudget × market_weight × market_multiplier
+  // Note: global_multiplier and pullback already applied at deployment level when calculating totalBudget
+  const marketBudget = baseBudget * marketWeight * (totalBudget !== null ? 1.0 : config.global_multiplier * marketMultiplier);
   
   // Distribute budget according to shape weights
   return shape.map(point => {
@@ -1133,6 +1161,8 @@ function deployMarketOrders(marketId, userId) {
 
 /**
  * Deploy bot orders for all attendance markets
+ * FIXED: Now calculates effective balance and distributes proportionally across all markets
+ * 
  * @param {string} userId - User ID to place orders under (the logged-in user)
  */
 function deployAllOrders(userId) {
@@ -1145,27 +1175,128 @@ function deployAllOrders(userId) {
     return { success: false, error: 'User ID required' };
   }
   
+  // Step 1: Get user's current balance
+  const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
+  if (!user) {
+    return { success: false, error: 'User not found' };
+  }
+  
+  // Step 2: Cancel all existing orders and calculate refund
+  const existingOrders = db.prepare(`
+    SELECT * FROM orders WHERE user_id = ? AND status IN ('open', 'partial')
+  `).all(userId);
+  
+  let totalRefund = 0;
+  for (const order of existingOrders) {
+    const remaining = order.amount_sats - order.filled_sats;
+    const refund = order.side === 'yes'
+      ? Math.ceil(remaining * order.price_cents / 100)
+      : Math.ceil(remaining * (100 - order.price_cents) / 100);
+    totalRefund += refund;
+  }
+  
+  // Cancel all existing orders
+  db.prepare(`
+    UPDATE orders SET status = 'cancelled', updated_at = datetime('now')
+    WHERE user_id = ? AND status IN ('open', 'partial')
+  `).run(userId);
+  
+  // Refund to user
+  if (totalRefund > 0) {
+    db.prepare('UPDATE users SET balance_sats = balance_sats + ? WHERE id = ?').run(totalRefund, userId);
+  }
+  
+  // Step 3: Calculate effective balance (available for deployment)
+  const effectiveBalance = user.balance_sats + totalRefund;
+  
+  // Step 4: Get all attendance markets
   const markets = db.prepare(`
-    SELECT id FROM markets WHERE type = 'attendance' AND status = 'open'
+    SELECT m.id FROM markets m WHERE m.type = 'attendance' AND m.status = 'open'
   `).all();
   
-  const results = { deployed: 0, failed: 0, totalOrders: 0, totalCost: 0, totalRefunded: 0 };
+  if (markets.length === 0) {
+    return { success: true, deployed: 0, failed: 0, totalOrders: 0, totalCost: 0, totalRefunded: totalRefund };
+  }
+  
+  // Step 5: Calculate total deployment cost using effective balance as budget
+  // First pass: calculate what WOULD be deployed to size the actual orders
+  let allOrders = [];
+  let totalTheoreticCost = 0;
   
   for (const market of markets) {
-    const result = deployMarketOrders(market.id, userId);
-    if (result.success) {
-      results.deployed++;
-      results.totalOrders += result.orders.length;
-      results.totalCost += result.totalCost;
-      results.totalRefunded += result.refunded || 0;
-    } else {
-      results.failed++;
+    // Get effective curve using the full balance as reference
+    const effectiveCurve = getEffectiveCurve(market.id, 'buy', effectiveBalance);
+    
+    if (!effectiveCurve || effectiveCurve.length === 0) {
+      continue;
+    }
+    
+    for (const point of effectiveCurve) {
+      if (point.amount < 100) continue;
+      
+      const cost = Math.ceil(point.amount * (100 - point.price) / 100);
+      totalTheoreticCost += cost;
+      allOrders.push({
+        marketId: market.id,
+        price: point.price,
+        amount: point.amount,
+        cost: cost
+      });
     }
   }
   
-  logBotAction('deploy_all', JSON.stringify({ userId, ...results }));
+  // Step 6: If theoretical cost > balance, scale down proportionally
+  let scaleFactor = 1.0;
+  if (totalTheoreticCost > effectiveBalance && totalTheoreticCost > 0) {
+    scaleFactor = effectiveBalance / totalTheoreticCost;
+  }
   
-  return { success: true, ...results };
+  // Step 7: Place scaled orders
+  const results = { deployed: 0, failed: 0, totalOrders: 0, totalCost: 0, totalRefunded: totalRefund };
+  const marketOrderCounts = {};
+  
+  for (const order of allOrders) {
+    const scaledAmount = Math.floor(order.amount * scaleFactor);
+    if (scaledAmount < 100) continue; // Skip orders below minimum
+    
+    const actualCost = Math.ceil(scaledAmount * (100 - order.price) / 100);
+    
+    // Check if we have enough balance left
+    const currentUser = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
+    if (currentUser.balance_sats < actualCost) {
+      continue; // Skip if insufficient balance
+    }
+    
+    // Place the order
+    const orderId = uuidv4();
+    db.prepare(`
+      INSERT INTO orders (id, user_id, market_id, side, price_cents, amount_sats, filled_sats, status)
+      VALUES (?, ?, ?, 'no', ?, ?, 0, 'open')
+    `).run(orderId, userId, order.marketId, order.price, scaledAmount);
+    
+    // Deduct cost
+    db.prepare('UPDATE users SET balance_sats = balance_sats - ? WHERE id = ?').run(actualCost, userId);
+    
+    results.totalCost += actualCost;
+    results.totalOrders++;
+    
+    // Track per-market counts
+    if (!marketOrderCounts[order.marketId]) {
+      marketOrderCounts[order.marketId] = 0;
+    }
+    marketOrderCounts[order.marketId]++;
+  }
+  
+  results.deployed = Object.keys(marketOrderCounts).length;
+  
+  logBotAction('deploy_all', JSON.stringify({ 
+    userId, 
+    effectiveBalance,
+    scaleFactor: scaleFactor.toFixed(4),
+    ...results 
+  }));
+  
+  return { success: true, ...results, scaleFactor };
 }
 
 /**
