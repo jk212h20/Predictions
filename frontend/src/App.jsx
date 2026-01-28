@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import * as api from './api';
 import './App.css';
 
+// Constants
+const SATS_PER_SHARE = 1000;
+
 // Format satoshis
 const formatSats = (sats) => {
   if (!sats) return '0';
@@ -234,14 +237,15 @@ function WalletModal({ user, onClose, onRefresh }) {
 function EventMarket({ market, user, onLogin, onRefresh }) {
   const [side, setSide] = useState('yes');
   const [price, setPrice] = useState(50);
-  const [amount, setAmount] = useState(10000);
+  const [shares, setShares] = useState(10);
   const [loading, setLoading] = useState(false);
 
   if (!market) return null;
 
+  const totalPayout = shares * SATS_PER_SHARE;
   const cost = side === 'yes' 
-    ? Math.ceil(amount * price / 100)
-    : Math.ceil(amount * (100 - price) / 100);
+    ? Math.ceil(totalPayout * price / 100)
+    : Math.ceil(totalPayout * (100 - price) / 100);
 
   const handleTrade = async () => {
     if (!user) {
@@ -250,7 +254,7 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
     }
     setLoading(true);
     try {
-      await api.placeOrder(market.id, side, price, amount);
+      await api.placeOrder(market.id, side, price, totalPayout);
       await onRefresh();
       alert(`Order placed! Cost: ${formatSats(cost)} sats`);
     } catch (err) {
@@ -286,7 +290,7 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
           
           <div className="trade-inputs">
             <label>
-              Price (¢)
+              Probability
               <input
                 type="range"
                 min="1"
@@ -294,24 +298,24 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
                 value={price}
                 onChange={e => setPrice(parseInt(e.target.value))}
               />
-              <span className="price-display">{price}¢</span>
+              <span className="price-display">{price}%</span>
             </label>
             
             <label>
-              Amount (sats to win)
+              Shares (each pays {formatSats(SATS_PER_SHARE)} sats if correct)
               <input
                 type="number"
-                value={amount}
-                onChange={e => setAmount(parseInt(e.target.value) || 0)}
-                min="100"
-                step="1000"
+                value={shares}
+                onChange={e => setShares(parseInt(e.target.value) || 0)}
+                min="1"
+                step="1"
               />
             </label>
           </div>
           
           <div className="trade-summary">
             <span>Cost: <strong>{formatSats(cost)} sats</strong></span>
-            <span>To win: <strong>{formatSats(amount)} sats</strong></span>
+            <span>Payout if correct: <strong>{formatSats(totalPayout)} sats</strong></span>
           </div>
           
           <button 
@@ -319,7 +323,7 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
             onClick={handleTrade}
             disabled={loading}
           >
-            {loading ? 'Placing...' : `Buy ${side.toUpperCase()} @ ${price}¢`}
+            {loading ? 'Placing...' : `Buy ${shares} ${side.toUpperCase()} @ ${price}%`}
           </button>
         </div>
       )}
@@ -330,8 +334,8 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
             <h4>YES Orders</h4>
             {market.orderBook.yes.slice(0, 5).map((o, i) => (
               <div key={i} className="ob-row">
-                <span>{o.price_cents}¢</span>
-                <span>{formatSats(o.total_sats)}</span>
+                <span>{o.price_cents}%</span>
+                <span>{formatSats(o.total_sats)} sats</span>
               </div>
             ))}
             {market.orderBook.yes.length === 0 && <span className="empty">No orders</span>}
@@ -340,8 +344,8 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
             <h4>NO Orders</h4>
             {market.orderBook.no.slice(0, 5).map((o, i) => (
               <div key={i} className="ob-row">
-                <span>{o.price_cents}¢</span>
-                <span>{formatSats(o.total_sats)}</span>
+                <span>{o.price_cents}%</span>
+                <span>{formatSats(o.total_sats)} sats</span>
               </div>
             ))}
             {market.orderBook.no.length === 0 && <span className="empty">No orders</span>}
@@ -414,7 +418,7 @@ function GMBrowser({ grandmasters, onSelectGM, marketType, setMarketType }) {
             </div>
             <div className="gm-odds">
               {gm.attendance_yes_price ? (
-                <span className="odds-badge">{gm.attendance_yes_price}¢</span>
+                <span className="odds-badge">{gm.attendance_yes_price}%</span>
               ) : (
                 <span className="odds-badge empty">--</span>
               )}
@@ -429,14 +433,15 @@ function GMBrowser({ grandmasters, onSelectGM, marketType, setMarketType }) {
 function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
   const [side, setSide] = useState('yes');
   const [price, setPrice] = useState(50);
-  const [amount, setAmount] = useState(10000);
+  const [shares, setShares] = useState(10);
   const [loading, setLoading] = useState(false);
 
   if (!market) return null;
 
+  const totalPayout = shares * SATS_PER_SHARE;
   const cost = side === 'yes' 
-    ? Math.ceil(amount * price / 100)
-    : Math.ceil(amount * (100 - price) / 100);
+    ? Math.ceil(totalPayout * price / 100)
+    : Math.ceil(totalPayout * (100 - price) / 100);
 
   const handleTrade = async () => {
     if (!user) {
@@ -445,7 +450,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
     }
     setLoading(true);
     try {
-      await api.placeOrder(market.id, side, price, amount);
+      await api.placeOrder(market.id, side, price, totalPayout);
       await onRefresh();
     } catch (err) {
       alert(err.message);
@@ -489,7 +494,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
             
             <div className="trade-inputs">
               <label>
-                Price (¢)
+                Probability
                 <input
                   type="range"
                   min="1"
@@ -497,24 +502,24 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
                   value={price}
                   onChange={e => setPrice(parseInt(e.target.value))}
                 />
-                <span className="price-display">{price}¢</span>
+                <span className="price-display">{price}%</span>
               </label>
               
               <label>
-                Amount (sats to win)
+                Shares (each pays {formatSats(SATS_PER_SHARE)} sats if correct)
                 <input
                   type="number"
-                  value={amount}
-                  onChange={e => setAmount(parseInt(e.target.value) || 0)}
-                  min="100"
-                  step="1000"
+                  value={shares}
+                  onChange={e => setShares(parseInt(e.target.value) || 0)}
+                  min="1"
+                  step="1"
                 />
               </label>
             </div>
             
             <div className="trade-summary">
               <span>Cost: <strong>{formatSats(cost)} sats</strong></span>
-              <span>To win: <strong>{formatSats(amount)} sats</strong></span>
+              <span>Payout if correct: <strong>{formatSats(totalPayout)} sats</strong></span>
             </div>
             
             <button 
@@ -522,7 +527,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               onClick={handleTrade}
               disabled={loading}
             >
-              {loading ? 'Placing...' : `Buy ${side.toUpperCase()} @ ${price}¢`}
+              {loading ? 'Placing...' : `Buy ${shares} ${side.toUpperCase()} @ ${price}%`}
             </button>
           </div>
         )}
@@ -534,7 +539,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               <h4>YES Bids</h4>
               {market.orderBook?.yes.map((o, i) => (
                 <div key={i} className="ob-row">
-                  <span className="ob-price">{o.price_cents}¢</span>
+                  <span className="ob-price">{o.price_cents}%</span>
                   <span className="ob-amount">{formatSats(o.total_sats)} sats</span>
                   <div className="ob-bar" style={{ width: `${Math.min(o.total_sats / 1000, 100)}%` }} />
                 </div>
@@ -547,7 +552,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               <h4>NO Bids</h4>
               {market.orderBook?.no.map((o, i) => (
                 <div key={i} className="ob-row">
-                  <span className="ob-price">{o.price_cents}¢</span>
+                  <span className="ob-price">{o.price_cents}%</span>
                   <span className="ob-amount">{formatSats(o.total_sats)} sats</span>
                   <div className="ob-bar ob-bar-no" style={{ width: `${Math.min(o.total_sats / 1000, 100)}%` }} />
                 </div>
@@ -564,7 +569,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
             <h3>Recent Trades</h3>
             {market.recentTrades.map((t, i) => (
               <div key={i} className="trade-row">
-                <span>{t.price_cents}¢</span>
+                <span>{t.price_cents}%</span>
                 <span>{formatSats(t.amount_sats)} sats</span>
                 <span className="trade-time">{new Date(t.created_at).toLocaleString()}</span>
               </div>
