@@ -1,18 +1,21 @@
 # Nixpacks configuration for Railway deployment
-# better-sqlite3 requires native compilation tools
+# better-sqlite3 requires native compilation tools and Node 20+
 
 providers = ["node"]
 
+[variables]
+NODE_ENV = "production"
+NIXPACKS_NODE_VERSION = "20"
+
 [phases.setup]
-nixPkgs = ["python3", "gcc", "gnumake"]
-aptPkgs = ["build-essential"]
+nixPkgs = ["python311", "gcc", "gnumake", "pkg-config"]
 
 [phases.install]
 cmds = [
-  "npm install --prefix frontend",
-  "npm run build --prefix frontend",
-  "npm install --prefix backend"
+  "cd frontend && npm ci --include=dev",
+  "cd frontend && npm run build",
+  "cd backend && npm ci"
 ]
 
 [start]
-cmd = "NODE_ENV=production node backend/server.js"
+cmd = "cd backend && node server.js"

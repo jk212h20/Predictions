@@ -2,6 +2,9 @@
   "name": "bitcoin-chess-960-predictions",
   "version": "1.0.0",
   "description": "Bitcoin prediction market for Bitcoin Chess 960 Championship",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "dev:backend": "cd backend && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
