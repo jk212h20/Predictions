@@ -496,9 +496,22 @@ export default function BotAdmin({ onClose }) {
                         key={curve.id}
                         className="btn btn-small btn-custom"
                         onClick={() => {
-                          if (curve.normalized_points) {
-                            const points = JSON.parse(curve.normalized_points);
-                            setCurvePoints(points.map(p => ({ price: p.price, weight: p.weight })));
+                          console.log('Loading curve:', curve);
+                          try {
+                            let points = curve.normalized_points;
+                            // Parse if it's a string
+                            if (typeof points === 'string') {
+                              points = JSON.parse(points);
+                            }
+                            if (Array.isArray(points) && points.length > 0) {
+                              setCurvePoints(points.map(p => ({ price: p.price, weight: p.weight })));
+                              console.log('Loaded points:', points);
+                            } else {
+                              alert('This curve has no saved points');
+                            }
+                          } catch (err) {
+                            console.error('Failed to load curve:', err);
+                            alert('Failed to load curve: ' + err.message);
                           }
                         }}
                         title={`Load "${curve.name}"`}
@@ -681,13 +694,6 @@ export default function BotAdmin({ onClose }) {
               <div className="curve-actions">
                 <button 
                   className="btn btn-success btn-large"
-                  onClick={handleSaveCurve}
-                  disabled={saving || curvePoints.length === 0}
-                >
-                  {saving ? 'Saving...' : '💾 Save as Active Curve'}
-                </button>
-                <button 
-                  className="btn btn-outline"
                   onClick={async () => {
                     if (curvePoints.length === 0) {
                       alert('Add at least one point first');
@@ -708,7 +714,7 @@ export default function BotAdmin({ onClose }) {
                   }}
                   disabled={saving || curvePoints.length === 0}
                 >
-                  {saving ? 'Saving...' : '📌 Save as Custom Preset'}
+                  {saving ? 'Saving...' : '💾 Save as Custom'}
                 </button>
               </div>
             </div>
