@@ -1905,6 +1905,28 @@ label {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.preset-label {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.preset-divider {
+  color: var(--border);
+  margin: 0 0.25rem;
+}
+
+.btn-custom {
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+  color: white;
+  border: none;
+}
+
+.btn-custom:hover {
+  background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%);
 }
 
 /* Drawable Curve Canvas */

@@ -69,10 +69,24 @@ export default function BotAdmin({ onClose }) {
 
   // Market weights state
   const [weights, setWeights] = useState([]);
+  
+  // Saved custom curves
+  const [savedCurves, setSavedCurves] = useState([]);
 
   useEffect(() => {
     loadAllData();
+    loadSavedCurves();
   }, []);
+  
+  // Load saved custom curves
+  const loadSavedCurves = async () => {
+    try {
+      const shapes = await api.getShapes();
+      setSavedCurves(shapes || []);
+    } catch (err) {
+      console.error('Failed to load saved curves:', err);
+    }
+  };
 
   const loadAllData = async () => {
     setLoading(true);
@@ -422,8 +436,9 @@ export default function BotAdmin({ onClose }) {
                 </p>
               </div>
 
-              {/* PRESET BUTTONS + ADD POINT */}
+              {/* PRESET BUTTONS */}
               <div className="curve-presets">
+                <span className="preset-label">Presets:</span>
                 <button 
                   className="btn btn-small"
                   onClick={async () => {
@@ -470,6 +485,29 @@ export default function BotAdmin({ onClose }) {
                 >
                   ⌒ Parabolic
                 </button>
+                
+                {/* SAVED CUSTOM CURVES */}
+                {savedCurves.length > 0 && (
+                  <>
+                    <span className="preset-divider">|</span>
+                    <span className="preset-label">Saved:</span>
+                    {savedCurves.map(curve => (
+                      <button 
+                        key={curve.id}
+                        className="btn btn-small btn-custom"
+                        onClick={() => {
+                          if (curve.normalized_points) {
+                            const points = JSON.parse(curve.normalized_points);
+                            setCurvePoints(points.map(p => ({ price: p.price, weight: p.weight })));
+                          }
+                        }}
+                        title={`Load "${curve.name}"`}
+                      >
+                        ✏️ {curve.name}
+                      </button>
+                    ))}
+                  </>
+                )}
               </div>
 
               {/* ADD POINT CONTROLS */}
@@ -646,7 +684,31 @@ export default function BotAdmin({ onClose }) {
                   onClick={handleSaveCurve}
                   disabled={saving || curvePoints.length === 0}
                 >
-                  {saving ? 'Saving...' : '💾 Save Curve Shape'}
+                  {saving ? 'Saving...' : '💾 Save as Active Curve'}
+                </button>
+                <button 
+                  className="btn btn-outline"
+                  onClick={async () => {
+                    if (curvePoints.length === 0) {
+                      alert('Add at least one point first');
+                      return;
+                    }
+                    const name = prompt('Name for this curve:', `Custom${savedCurves.length + 1}`);
+                    if (!name) return;
+                    
+                    setSaving(true);
+                    try {
+                      await api.saveShape(name, 'custom', {}, curvePoints);
+                      await loadSavedCurves();
+                      alert(`Curve saved as "${name}"`);
+                    } catch (err) {
+                      alert('Failed to save: ' + err.message);
+                    }
+                    setSaving(false);
+                  }}
+                  disabled={saving || curvePoints.length === 0}
+                >
+                  {saving ? 'Saving...' : '📌 Save as Custom Preset'}
                 </button>
               </div>
             </div>
