@@ -412,68 +412,51 @@ export default function BotAdmin({ onClose }) {
             </div>
           )}
 
-          {/* CURVE EDITOR TAB */}
+          {/* CURVE EDITOR TAB - Now shows percentages that total 100% */}
           {activeTab === 'curve' && (
             <div className="bot-curve-editor">
               <div className="curve-info">
                 <p>
-                  <strong>Draw your curve!</strong> Click and drag the bars to adjust how much liquidity to offer at each price.
-                  Higher bars = more sats offered at that YES probability.
+                  <strong>Shape your curve!</strong> Drag the bars to set the distribution of liquidity across prices.
+                  Bars show <strong>percentages that always total 100%</strong>. When you raise one bar, others automatically decrease.
                 </p>
               </div>
 
-              {/* PRESET BUTTONS - Mathematically meaningful shapes */}
+              {/* PRESET BUTTONS - Load normalized shapes */}
               <div className="curve-presets">
                 <button 
                   className="btn btn-small"
                   onClick={async () => {
                     try {
                       const result = await api.previewShape('flat', {});
-                      const scaled = result.normalized_points.map(p => ({ price: p.price, amount: Math.round(p.weight * 1000000) }));
-                      setCurvePoints(scaled);
+                      setCurvePoints(result.normalized_points.map(p => ({ price: p.price, weight: p.weight })));
                     } catch (err) {
-                      // Fallback to local calculation
-                      const flat = [5,10,15,20,25,30,35,40,45,50].map(p => ({ price: p, amount: 100000 }));
-                      setCurvePoints(flat);
+                      // Fallback - equal distribution
+                      setCurvePoints([5,10,15,20,25,30,35,40,45,50].map(p => ({ price: p, weight: 0.1 })));
                     }
                   }}
                 >
-                  📏 Flat
+                  📏 Flat (Equal)
                 </button>
                 <button 
                   className="btn btn-small"
                   onClick={async () => {
                     try {
                       const result = await api.previewShape('bell', { mu: 20, sigma: 15 });
-                      const scaled = result.normalized_points.map(p => ({ price: p.price, amount: Math.round(p.weight * 1000000) }));
-                      setCurvePoints(scaled);
+                      setCurvePoints(result.normalized_points.map(p => ({ price: p.price, weight: p.weight })));
                     } catch (err) {
-                      // Fallback
-                      const bell = [
-                        { price: 5, amount: 50000 },
-                        { price: 10, amount: 100000 },
-                        { price: 15, amount: 150000 },
-                        { price: 20, amount: 200000 },
-                        { price: 25, amount: 200000 },
-                        { price: 30, amount: 150000 },
-                        { price: 35, amount: 100000 },
-                        { price: 40, amount: 75000 },
-                        { price: 45, amount: 50000 },
-                        { price: 50, amount: 25000 }
-                      ];
-                      setCurvePoints(bell);
+                      console.error('Bell preview failed:', err);
                     }
                   }}
                 >
-                  🔔 Bell (μ=20)
+                  🔔 Bell (Peak at 20%)
                 </button>
                 <button 
                   className="btn btn-small"
                   onClick={async () => {
                     try {
                       const result = await api.previewShape('exponential', { decay: 0.08 });
-                      const scaled = result.normalized_points.map(p => ({ price: p.price, amount: Math.round(p.weight * 1000000) }));
-                      setCurvePoints(scaled);
+                      setCurvePoints(result.normalized_points.map(p => ({ price: p.price, weight: p.weight })));
                     } catch (err) {
                       console.error('Exponential preview failed:', err);
                     }
@@ -486,8 +469,7 @@ export default function BotAdmin({ onClose }) {
                   onClick={async () => {
                     try {
                       const result = await api.previewShape('sigmoid', { midpoint: 25, steepness: 0.3 });
-                      const scaled = result.normalized_points.map(p => ({ price: p.price, amount: Math.round(p.weight * 1000000) }));
-                      setCurvePoints(scaled);
+                      setCurvePoints(result.normalized_points.map(p => ({ price: p.price, weight: p.weight })));
                     } catch (err) {
                       console.error('Sigmoid preview failed:', err);
                     }
@@ -500,8 +482,7 @@ export default function BotAdmin({ onClose }) {
                   onClick={async () => {
                     try {
                       const result = await api.previewShape('parabolic', { maxPrice: 55 });
-                      const scaled = result.normalized_points.map(p => ({ price: p.price, amount: Math.round(p.weight * 1000000) }));
-                      setCurvePoints(scaled);
+                      setCurvePoints(result.normalized_points.map(p => ({ price: p.price, weight: p.weight })));
                     } catch (err) {
                       console.error('Parabolic preview failed:', err);
                     }
@@ -509,27 +490,23 @@ export default function BotAdmin({ onClose }) {
                 >
                   ⌒ Parabolic
                 </button>
-                <button 
-                  className="btn btn-small btn-danger"
-                  onClick={() => setCurvePoints([])}
-                >
-                  🗑️ Clear
-                </button>
               </div>
 
-              {/* DRAWABLE CURVE - SVG Based */}
+              {/* DRAWABLE CURVE - Shows percentages */}
               <div className="curve-drawable">
                 <div className="curve-y-axis">
-                  <span>300k</span>
-                  <span>200k</span>
-                  <span>100k</span>
-                  <span>0</span>
+                  <span>50%</span>
+                  <span>25%</span>
+                  <span>10%</span>
+                  <span>0%</span>
                 </div>
                 <div className="curve-canvas">
                   {[5,10,15,20,25,30,35,40,45,50].map(price => {
                     const point = curvePoints.find(p => p.price === price);
-                    const amount = point?.amount || 0;
-                    const heightPercent = Math.min((amount / 300000) * 100, 100);
+                    const weight = point?.weight || 0;
+                    // Display up to 50% max height (cap at 50% for visual clarity)
+                    const heightPercent = Math.min((weight / 0.5) * 100, 100);
+                    const displayPercent = (weight * 100).toFixed(1);
                     
                     return (
                       <div 
@@ -537,23 +514,62 @@ export default function BotAdmin({ onClose }) {
                         className="curve-bar-container"
                         onMouseDown={(e) => {
                           const rect = e.currentTarget.getBoundingClientRect();
-                          const updateAmount = (clientY) => {
+                          const updateWeight = (clientY) => {
                             const relativeY = rect.bottom - clientY;
-                            const newAmount = Math.max(0, Math.min(300000, Math.round((relativeY / rect.height) * 300000 / 10000) * 10000));
+                            // Map to 0-50% range
+                            let newWeight = Math.max(0, Math.min(0.5, (relativeY / rect.height) * 0.5));
+                            // Round to nearest 0.5%
+                            newWeight = Math.round(newWeight * 200) / 200;
+                            
                             setCurvePoints(prev => {
-                              const existing = prev.find(p => p.price === price);
-                              if (existing) {
-                                return prev.map(p => p.price === price ? { ...p, amount: newAmount } : p);
-                              } else if (newAmount > 0) {
-                                return [...prev, { price, amount: newAmount }].sort((a,b) => a.price - b.price);
+                              // Get current state
+                              const prices = [5,10,15,20,25,30,35,40,45,50];
+                              let points = prices.map(p => {
+                                const existing = prev.find(pt => pt.price === p);
+                                return { price: p, weight: existing?.weight || 0.1 };
+                              });
+                              
+                              // Find current point's old weight
+                              const currentPoint = points.find(p => p.price === price);
+                              const oldWeight = currentPoint?.weight || 0.1;
+                              const weightDiff = newWeight - oldWeight;
+                              
+                              // Calculate total of OTHER points
+                              const otherPoints = points.filter(p => p.price !== price);
+                              const otherTotal = otherPoints.reduce((sum, p) => sum + p.weight, 0);
+                              
+                              // Distribute the difference among other points proportionally
+                              if (otherTotal > 0 && weightDiff !== 0) {
+                                const remaining = 1 - newWeight;
+                                const scale = remaining / otherTotal;
+                                
+                                points = points.map(p => {
+                                  if (p.price === price) {
+                                    return { ...p, weight: newWeight };
+                                  } else {
+                                    return { ...p, weight: Math.max(0, p.weight * scale) };
+                                  }
+                                });
+                              } else {
+                                // Just update the current point
+                                points = points.map(p => 
+                                  p.price === price ? { ...p, weight: newWeight } : p
+                                );
                               }
-                              return prev;
+                              
+                              // Ensure they sum to 1.0
+                              const total = points.reduce((sum, p) => sum + p.weight, 0);
+                              if (total > 0 && Math.abs(total - 1) > 0.001) {
+                                points = points.map(p => ({ ...p, weight: p.weight / total }));
+                              }
+                              
+                              return points;
                             });
                           };
                           
-                          updateAmount(e.clientY);
+                          updateWeight(e.clientY);
                           
-                          const handleMouseMove = (moveEvent) => updateAmount(moveEvent.clientY);
+                          const handleMouseMove = (moveEvent) => updateWeight(moveEvent.clientY);
                           const handleMouseUp = () => {
                             window.removeEventListener('mousemove', handleMouseMove);
                             window.removeEventListener('mouseup', handleMouseUp);
@@ -567,7 +583,7 @@ export default function BotAdmin({ onClose }) {
                           className="curve-bar-fill"
                           style={{ height: `${heightPercent}%` }}
                         >
-                          <span className="bar-amount">{amount > 0 ? `${(amount/1000).toFixed(0)}k` : ''}</span>
+                          <span className="bar-amount">{weight > 0.005 ? `${displayPercent}%` : ''}</span>
                         </div>
                         <span className="bar-price">{price}%</span>
                       </div>
@@ -576,69 +592,40 @@ export default function BotAdmin({ onClose }) {
                 </div>
               </div>
 
-              {/* SUMMARY TABLE */}
+              {/* SUMMARY - Always shows 100% total */}
               <div className="curve-summary">
                 <div className="summary-stat">
-                  <label>Total Liquidity (per market)</label>
-                  <value>{formatSats(curveTotalAmount)} sats</value>
+                  <label>Total Distribution</label>
+                  <value className="total-100">100%</value>
                 </div>
                 <div className="summary-stat">
-                  <label>Total Cost (NO side)</label>
-                  <value>{formatSats(curveTotalCost)} sats</value>
+                  <label>Active Price Points</label>
+                  <value>{curvePoints.filter(p => p.weight > 0.005).length}</value>
                 </div>
                 <div className="summary-stat">
-                  <label>Price Points</label>
-                  <value>{curvePoints.filter(p => p.amount > 0).length}</value>
+                  <label>Peak Allocation</label>
+                  <value>{curvePoints.length > 0 ? `${(Math.max(...curvePoints.map(p => p.weight)) * 100).toFixed(1)}%` : '-'}</value>
                 </div>
               </div>
 
-              {/* DETAILED TABLE (Collapsible) */}
-              <details className="curve-details">
-                <summary>📋 View Detailed Table</summary>
-                <table className="curve-table">
-                  <thead>
-                    <tr>
-                      <th>YES Price</th>
-                      <th>Amount (sats)</th>
-                      <th>Bot Cost</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {curvePoints.filter(p => p.amount > 0).map((point, i) => (
-                      <tr key={i}>
-                        <td>{point.price}%</td>
-                        <td>
-                          <input 
-                            type="number"
-                            value={point.amount}
-                            min="0"
-                            step="10000"
-                            onChange={e => {
-                              const newAmount = parseInt(e.target.value) || 0;
-                              setCurvePoints(prev => prev.map(p => 
-                                p.price === point.price ? { ...p, amount: newAmount } : p
-                              ));
-                            }}
-                            style={{ width: '100px' }}
-                          />
-                        </td>
-                        <td>{formatSats(Math.ceil(point.amount * (100 - point.price) / 100))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </details>
+              <div className="curve-note">
+                <p>
+                  💡 This curve shape will be applied to ALL markets. The actual sats per order are calculated as:
+                  <br />
+                  <code>total_liquidity × market_weight × shape_percentage</code>
+                </p>
+              </div>
 
               <div className="curve-actions">
                 <button 
                   className="btn btn-success btn-large"
                   onClick={handleSaveCurve}
-                  disabled={saving || curvePoints.filter(p => p.amount > 0).length === 0}
+                  disabled={saving || curvePoints.length === 0}
                 >
-                  {saving ? 'Saving...' : '💾 Save Curve'}
+                  {saving ? 'Saving...' : '💾 Save Curve Shape'}
                 </button>
                 <p className="save-note">
-                  After saving, click "Deploy All Orders" to apply changes to markets.
+                  After saving, go to the Deploy tab to preview and deploy orders.
                 </p>
               </div>
             </div>

@@ -657,11 +657,18 @@ function getEffectiveCurve(marketId, curveType = 'buy') {
   }
   
   // Get market weight (what fraction of total liquidity goes to this market)
-  const weightRecord = getMarketWeight(marketId);
+  let weightRecord = getMarketWeight(marketId);
+  
+  // Auto-initialize weights if none exist for this market
+  if (!weightRecord) {
+    initializeMarketWeights();
+    weightRecord = getMarketWeight(marketId);
+  }
+  
   const marketWeight = weightRecord?.weight || 0;
   
   if (marketWeight === 0) {
-    // No weight assigned - need to initialize weights
+    // No weight even after initialization - shouldn't happen but handle it
     return null;
   }
   

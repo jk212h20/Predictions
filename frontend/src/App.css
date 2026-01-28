@@ -2091,6 +2091,29 @@ label {
   color: var(--text-muted);
 }
 
+.curve-note {
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.curve-note code {
+  background: var(--bg-input);
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  font-size: 0.8125rem;
+  color: var(--accent);
+}
+
+.summary-stat .total-100 {
+  color: var(--yes-color) !important;
+}
+
 /* Config Preview - Pullback Explanation */
 .pullback-explanation {
   font-size: 0.875rem;
