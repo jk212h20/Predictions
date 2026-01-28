@@ -451,27 +451,92 @@ function LoginModal({ onLogin, onRegister, onGoogleLogin, onLightningLogin, onCl
 function WalletModal({ user, onClose, onRefresh }) {
   const [depositAmount, setDepositAmount] = useState(100000);
   const [invoice, setInvoice] = useState(null);
+  const [depositStatus, setDepositStatus] = useState('idle'); // idle, generating, waiting, checking, credited, error
+  const [depositError, setDepositError] = useState('');
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawInvoice, setWithdrawInvoice] = useState('');
+  const pollingRef = useRef(null);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
 
   const handleDeposit = async () => {
+    setDepositStatus('generating');
+    setDepositError('');
     try {
       const inv = await api.createDeposit(depositAmount);
       setInvoice(inv);
+      setDepositStatus('waiting');
+      
+      // Start polling for payment status
+      startPollingPayment(inv.payment_hash, inv.is_real);
     } catch (err) {
-      alert(err.message);
+      setDepositError(err.message);
+      setDepositStatus('error');
     }
+  };
+
+  const startPollingPayment = (paymentHash, isReal) => {
+    // Clear any existing polling
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    
+    // Poll every 3 seconds for real invoices, 2 seconds for mock
+    const pollInterval = isReal ? 3000 : 2000;
+    
+    pollingRef.current = setInterval(async () => {
+      try {
+        setDepositStatus('checking');
+        const result = await api.checkDeposit(paymentHash);
+        
+        if (result.status === 'credited' || result.status === 'already_credited') {
+          clearInterval(pollingRef.current);
+          setDepositStatus('credited');
+          await onRefresh();
+          
+          // Close modal after showing success briefly
+          setTimeout(() => {
+            onClose();
+          }, 2000);
+        } else if (result.status === 'paid') {
+          // This shouldn't happen if credited works, but handle it
+          clearInterval(pollingRef.current);
+          setDepositStatus('credited');
+          await onRefresh();
+        } else {
+          // Still pending, continue polling
+          setDepositStatus('waiting');
+        }
+      } catch (err) {
+        console.error('Polling error:', err);
+        // Don't stop polling on error, just log it
+      }
+    }, pollInterval);
   };
 
   const handleSimulatePayment = async () => {
     try {
       await api.simulatePayment(invoice.payment_hash);
-      await api.checkDeposit(invoice.payment_hash);
-      await onRefresh();
-      setInvoice(null);
-      alert('Deposit credited!');
+      // Polling will pick up the payment
     } catch (err) {
       alert(err.message);
+    }
+  };
+
+  const handleCancelDeposit = () => {
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    setInvoice(null);
+    setDepositStatus('idle');
+    setDepositError('');
+  };
+
+  const handleCopyInvoice = () => {
+    if (invoice?.payment_request) {
+      navigator.clipboard.writeText(invoice.payment_request);
+      alert('Invoice copied to clipboard!');
     }
   };
 
@@ -498,30 +563,103 @@ function WalletModal({ user, onClose, onRefresh }) {
 
         <div className="wallet-section">
           <h3>Deposit</h3>
-          {!invoice ? (
+          {depositStatus === 'idle' || depositStatus === 'generating' || depositStatus === 'error' ? (
             <>
-              <input
-                type="number"
-                value={depositAmount}
-                onChange={e => setDepositAmount(parseInt(e.target.value))}
-                min="1000"
-                step="1000"
-              />
-              <button className="btn btn-primary" onClick={handleDeposit}>
-                Generate Invoice
+              {depositError && <div className="auth-error">{depositError}</div>}
+              <div className="deposit-amount-input">
+                <input
+                  type="number"
+                  value={depositAmount}
+                  onChange={e => setDepositAmount(parseInt(e.target.value) || 0)}
+                  min="1000"
+                  step="1000"
+                />
+                <span className="sats-label">sats</span>
+              </div>
+              <div className="deposit-presets">
+                <button className="btn btn-small btn-outline" onClick={() => setDepositAmount(10000)}>10k</button>
+                <button className="btn btn-small btn-outline" onClick={() => setDepositAmount(50000)}>50k</button>
+                <button className="btn btn-small btn-outline" onClick={() => setDepositAmount(100000)}>100k</button>
+                <button className="btn btn-small btn-outline" onClick={() => setDepositAmount(500000)}>500k</button>
+              </div>
+              <button 
+                className="btn btn-primary btn-large" 
+                onClick={handleDeposit}
+                disabled={depositStatus === 'generating' || depositAmount < 1000}
+              >
+                {depositStatus === 'generating' ? 'Generating Invoice...' : `Generate ${formatSats(depositAmount)} sats Invoice`}
               </button>
             </>
+          ) : depositStatus === 'credited' ? (
+            <div className="deposit-success">
+              <div className="success-icon">✓</div>
+              <p>Deposit credited!</p>
+              <p className="success-amount">+{formatSats(depositAmount)} sats</p>
+            </div>
           ) : (
-            <div className="invoice-display">
-              <code>{invoice.payment_request}</code>
-              <p className="invoice-note">
-                In production, scan this with your Lightning wallet.
-                <br />For testing:
-              </p>
-              <button className="btn btn-success" onClick={handleSimulatePayment}>
-                Simulate Payment (Test Mode)
-              </button>
-              <button className="btn btn-outline" onClick={() => setInvoice(null)}>
+            <div className="deposit-invoice">
+              {invoice?.is_real && (
+                <div className="real-invoice-badge">
+                  ⚡ Real Lightning Invoice
+                </div>
+              )}
+              
+              <div className="invoice-qr-container">
+                <QRCodeSVG 
+                  value={invoice?.payment_request || ''}
+                  size={200}
+                  level="M"
+                  includeMargin={true}
+                  className="invoice-qr"
+                />
+              </div>
+
+              <div className="invoice-amount">
+                <strong>{formatSats(depositAmount)} sats</strong>
+              </div>
+
+              <div className="invoice-status">
+                {depositStatus === 'waiting' && (
+                  <>
+                    <div className="pulse-dot"></div>
+                    <span>Waiting for payment...</span>
+                  </>
+                )}
+                {depositStatus === 'checking' && (
+                  <>
+                    <div className="spinner-small"></div>
+                    <span>Checking payment status...</span>
+                  </>
+                )}
+              </div>
+
+              <div className="invoice-actions">
+                <button className="btn btn-outline" onClick={handleCopyInvoice}>
+                  📋 Copy Invoice
+                </button>
+                <a 
+                  href={`lightning:${invoice?.payment_request}`} 
+                  className="btn btn-primary"
+                >
+                  Open Wallet
+                </a>
+              </div>
+
+              <div className="invoice-text">
+                <code>{invoice?.payment_request?.slice(0, 50)}...</code>
+              </div>
+
+              {/* Show simulate button only for mock invoices */}
+              {!invoice?.is_real && (
+                <div className="test-mode-section">
+                  <p className="test-mode-note">🧪 Test Mode - Mock Invoice</p>
+                  <button className="btn btn-success" onClick={handleSimulatePayment}>
+                    Simulate Payment
+                  </button>
+                </div>
+              )}
+
+              <button className="btn btn-outline btn-small" onClick={handleCancelDeposit}>
                 Cancel
               </button>
             </div>
@@ -538,7 +676,7 @@ function WalletModal({ user, onClose, onRefresh }) {
           />
           <input
             type="text"
-            placeholder="Lightning Invoice"
+            placeholder="Paste your Lightning Invoice here"
             value={withdrawInvoice}
             onChange={e => setWithdrawInvoice(e.target.value)}
           />

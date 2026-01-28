@@ -657,48 +657,66 @@ app.get('/api/user/trades', authMiddleware, (req, res) => {
 
 // ==================== LIGHTNING/WALLET ROUTES ====================
 
-app.post('/api/wallet/deposit', authMiddleware, (req, res) => {
+app.post('/api/wallet/deposit', authMiddleware, async (req, res) => {
   const { amount_sats } = req.body;
   if (!amount_sats || amount_sats < 1000) {
     return res.status(400).json({ error: 'Minimum deposit is 1000 sats' });
   }
   
-  const invoice = lightning.createInvoice(amount_sats, `Deposit for ${req.user.email}`);
-  
-  // Record pending transaction
-  db.prepare(`
-    INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, lightning_invoice, lightning_payment_hash, status)
-    VALUES (?, ?, 'deposit', ?, 0, ?, ?, 'pending')
-  `).run(uuidv4(), req.user.id, amount_sats, invoice.payment_request, invoice.payment_hash);
-  
-  res.json(invoice);
+  try {
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const invoice = await lightning.createInvoice(amount_sats, `Deposit for ${user.email || user.username || 'user'}`);
+    
+    // Record pending transaction
+    db.prepare(`
+      INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, lightning_invoice, lightning_payment_hash, status)
+      VALUES (?, ?, 'deposit', ?, 0, ?, ?, 'pending')
+    `).run(uuidv4(), req.user.id, amount_sats, invoice.payment_request, invoice.payment_hash);
+    
+    res.json({
+      ...invoice,
+      is_real: invoice.is_real, // Let frontend know if this is a real invoice
+    });
+  } catch (err) {
+    console.error('Deposit error:', err);
+    res.status(500).json({ error: err.message || 'Failed to create deposit invoice' });
+  }
 });
 
-app.post('/api/wallet/check-deposit', authMiddleware, (req, res) => {
+app.post('/api/wallet/check-deposit', authMiddleware, async (req, res) => {
   const { payment_hash } = req.body;
-  const invoice = lightning.checkInvoice(payment_hash);
   
-  if (invoice.status === 'paid') {
-    // Check if already credited
-    const tx = db.prepare(`
-      SELECT * FROM transactions WHERE lightning_payment_hash = ? AND status = 'pending'
-    `).get(payment_hash);
+  try {
+    const invoice = await lightning.checkInvoice(payment_hash);
     
-    if (tx) {
-      // Credit user
-      const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
-      const newBalance = user.balance_sats + tx.amount_sats;
+    if (invoice.status === 'paid') {
+      // Check if already credited
+      const tx = db.prepare(`
+        SELECT * FROM transactions WHERE lightning_payment_hash = ? AND status = 'pending'
+      `).get(payment_hash);
       
-      db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, req.user.id);
-      db.prepare(`
-        UPDATE transactions SET status = 'completed', balance_after = ? WHERE id = ?
-      `).run(newBalance, tx.id);
+      if (tx) {
+        // Credit user
+        const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
+        const newBalance = user.balance_sats + tx.amount_sats;
+        
+        db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, req.user.id);
+        db.prepare(`
+          UPDATE transactions SET status = 'completed', balance_after = ? WHERE id = ?
+        `).run(newBalance, tx.id);
+        
+        return res.json({ status: 'credited', balance_sats: newBalance, is_real: invoice.is_real });
+      }
       
-      return res.json({ status: 'credited', balance_sats: newBalance });
+      // Already credited
+      return res.json({ status: 'already_credited', is_real: invoice.is_real });
     }
+    
+    res.json({ status: invoice.status, is_real: invoice.is_real });
+  } catch (err) {
+    console.error('Check deposit error:', err);
+    res.status(500).json({ error: err.message || 'Failed to check deposit status' });
   }
-  
-  res.json({ status: invoice.status });
 });
 
 // Mock: Simulate payment (for testing only)

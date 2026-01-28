@@ -1,6 +1,6 @@
 /**
  * Lightning/Voltage integration with LNURL-auth support
- * Includes: Invoice creation, LNURL-auth, signature verification
+ * Includes: Invoice creation via Voltage API, LNURL-auth, signature verification
  */
 
 const { v4: uuidv4 } = require('uuid');
@@ -8,9 +8,44 @@ const crypto = require('crypto');
 const secp256k1 = require('secp256k1');
 const { bech32 } = require('bech32');
 
-// In-memory store for mock invoices (in production, this comes from Voltage/LND)
-const mockInvoices = new Map();
-const mockPayments = new Map();
+// ==================== VOLTAGE API CONFIGURATION ====================
+
+const VOLTAGE_API_BASE = 'https://api.voltage.cloud/v1';
+const VOLTAGE_API_KEY = process.env.VOLTAGE_API_KEY;
+const VOLTAGE_TEAM_ID = process.env.VOLTAGE_TEAM_ID;
+
+// Check if Voltage is configured
+const isVoltageConfigured = () => {
+  return !!(VOLTAGE_API_KEY && VOLTAGE_TEAM_ID);
+};
+
+// Make authenticated request to Voltage API
+async function voltageRequest(endpoint, options = {}) {
+  const url = `${VOLTAGE_API_BASE}${endpoint}`;
+  
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Api-Key': VOLTAGE_API_KEY,
+    'X-Team-Id': VOLTAGE_TEAM_ID,
+  };
+  
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...headers,
+      ...options.headers,
+    },
+  });
+  
+  const data = await response.json();
+  
+  if (!response.ok) {
+    console.error('Voltage API error:', data);
+    throw new Error(data.message || data.error || `Voltage API error: ${response.status}`);
+  }
+  
+  return data;
+}
 
 // ==================== LNURL-AUTH CONFIGURATION ====================
 
@@ -280,13 +315,54 @@ function cleanupExpiredChallenges(db) {
   return result.changes;
 }
 
-// ==================== MOCK LIGHTNING FUNCTIONS ====================
+// ==================== LIGHTNING INVOICE FUNCTIONS (VOLTAGE) ====================
+
+// In-memory store for mock invoices (used when Voltage is not configured)
+const mockInvoices = new Map();
+const mockPayments = new Map();
 
 /**
- * Generate a mock Lightning invoice for deposits
- * In production: Call Voltage API to create real invoice
+ * Generate a Lightning invoice for deposits
+ * Uses Voltage API if configured, otherwise falls back to mock
+ * @param {number} amountSats - Amount in satoshis
+ * @param {string} memo - Invoice description
+ * @returns {Object} Invoice object with payment_request, payment_hash, etc.
  */
-function createInvoice(amountSats, memo = 'Deposit to Bitcoin Chess 960 Predictions') {
+async function createInvoice(amountSats, memo = 'Deposit to Bitcoin Chess 960 Predictions') {
+  // Use real Voltage API if configured
+  if (isVoltageConfigured()) {
+    try {
+      console.log(`Creating Voltage invoice for ${amountSats} sats...`);
+      
+      const response = await voltageRequest('/node/invoice', {
+        method: 'POST',
+        body: JSON.stringify({
+          amount_sats: amountSats,
+          memo: memo,
+          expiry: 3600, // 1 hour expiry
+        }),
+      });
+      
+      console.log('Voltage invoice created:', response.payment_hash);
+      
+      return {
+        payment_hash: response.payment_hash,
+        payment_request: response.payment_request,
+        amount_sats: amountSats,
+        memo,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 3600000).toISOString(),
+        is_real: true, // Flag to indicate this is a real invoice
+      };
+    } catch (err) {
+      console.error('Failed to create Voltage invoice:', err);
+      throw new Error(`Failed to create Lightning invoice: ${err.message}`);
+    }
+  }
+  
+  // Fallback to mock invoice for development
+  console.log('Voltage not configured, using mock invoice');
   const paymentHash = uuidv4().replace(/-/g, '');
   const invoice = {
     payment_hash: paymentHash,
@@ -295,7 +371,8 @@ function createInvoice(amountSats, memo = 'Deposit to Bitcoin Chess 960 Predicti
     memo,
     status: 'pending',
     created_at: new Date().toISOString(),
-    expires_at: new Date(Date.now() + 3600000).toISOString(), // 1 hour expiry
+    expires_at: new Date(Date.now() + 3600000).toISOString(),
+    is_real: false,
   };
   
   mockInvoices.set(paymentHash, invoice);
@@ -304,19 +381,54 @@ function createInvoice(amountSats, memo = 'Deposit to Bitcoin Chess 960 Predicti
 
 /**
  * Check if an invoice has been paid
- * In production: Query Voltage/LND for invoice status
+ * Uses Voltage API if configured, otherwise checks mock store
+ * @param {string} paymentHash - The payment hash of the invoice
+ * @returns {Object} Invoice status object
  */
-function checkInvoice(paymentHash) {
+async function checkInvoice(paymentHash) {
+  // Use real Voltage API if configured
+  if (isVoltageConfigured()) {
+    try {
+      console.log(`Checking Voltage invoice status: ${paymentHash}`);
+      
+      const response = await voltageRequest(`/node/invoice/${paymentHash}`, {
+        method: 'GET',
+      });
+      
+      // Map Voltage status to our format
+      // Voltage returns: { settled: boolean, amt_paid_sat: number, ... }
+      const status = response.settled ? 'paid' : 'pending';
+      
+      console.log(`Invoice ${paymentHash} status: ${status}`);
+      
+      return {
+        payment_hash: paymentHash,
+        status: status,
+        amount_sats: response.amt_paid_sat || response.value,
+        settled_at: response.settle_date ? new Date(response.settle_date * 1000).toISOString() : null,
+        is_real: true,
+      };
+    } catch (err) {
+      console.error('Failed to check Voltage invoice:', err);
+      // If not found, return not_found status
+      if (err.message.includes('not found') || err.message.includes('404')) {
+        return { status: 'not_found', payment_hash: paymentHash };
+      }
+      throw new Error(`Failed to check invoice: ${err.message}`);
+    }
+  }
+  
+  // Fallback to mock
   const invoice = mockInvoices.get(paymentHash);
   if (!invoice) {
     return { status: 'not_found' };
   }
-  return invoice;
+  return { ...invoice, is_real: false };
 }
 
 /**
- * Simulate paying an invoice (for testing)
- * In production: This would be triggered by webhook from Voltage
+ * Simulate paying an invoice (for testing only)
+ * Only works with mock invoices
  */
 function simulatePayment(paymentHash) {
   const invoice = mockInvoices.get(paymentHash);
@@ -330,9 +442,42 @@ function simulatePayment(paymentHash) {
 
 /**
  * Send a Lightning payment for withdrawals
- * In production: Call Voltage API to pay invoice
+ * Uses Voltage API if configured
+ * @param {string} paymentRequest - The bolt11 invoice to pay
+ * @param {number} amountSats - Expected amount (for validation)
+ * @returns {Object} Payment result
  */
-function payInvoice(paymentRequest, amountSats) {
+async function payInvoice(paymentRequest, amountSats) {
+  if (isVoltageConfigured()) {
+    try {
+      console.log(`Paying invoice via Voltage: ${amountSats} sats`);
+      
+      const response = await voltageRequest('/node/pay', {
+        method: 'POST',
+        body: JSON.stringify({
+          payment_request: paymentRequest,
+          // Optional: timeout_seconds, fee_limit_sat
+        }),
+      });
+      
+      console.log('Payment sent:', response.payment_hash);
+      
+      return {
+        id: response.payment_hash,
+        payment_request: paymentRequest,
+        amount_sats: response.value_sat || amountSats,
+        fee_sats: response.fee_sat || 0,
+        status: response.status === 'SUCCEEDED' ? 'completed' : response.status,
+        created_at: new Date().toISOString(),
+        is_real: true,
+      };
+    } catch (err) {
+      console.error('Failed to pay invoice via Voltage:', err);
+      throw new Error(`Payment failed: ${err.message}`);
+    }
+  }
+  
+  // Fallback to mock
   const paymentId = uuidv4();
   const payment = {
     id: paymentId,
@@ -340,6 +485,7 @@ function payInvoice(paymentRequest, amountSats) {
     amount_sats: amountSats,
     status: 'completed', // Mock: instant success
     created_at: new Date().toISOString(),
+    is_real: false,
   };
   
   mockPayments.set(paymentId, payment);
@@ -348,14 +494,64 @@ function payInvoice(paymentRequest, amountSats) {
 
 /**
  * Get node info
- * In production: Return actual node pubkey and alias
+ * Returns Voltage node info if configured
  */
-function getNodeInfo() {
+async function getNodeInfo() {
+  if (isVoltageConfigured()) {
+    try {
+      const response = await voltageRequest('/node/info', {
+        method: 'GET',
+      });
+      
+      return {
+        pubkey: response.identity_pubkey,
+        alias: response.alias || 'Bitcoin Chess 960 Predictions',
+        network: response.chains?.[0]?.network || 'mainnet',
+        is_real: true,
+      };
+    } catch (err) {
+      console.error('Failed to get Voltage node info:', err);
+      // Return mock info as fallback
+    }
+  }
+  
   return {
     pubkey: 'mock_03' + 'a'.repeat(64),
     alias: 'Bitcoin Chess 960 Predictions',
     network: 'mainnet',
+    is_real: false,
   };
+}
+
+/**
+ * Check Voltage connection status
+ * @returns {Object} Connection status
+ */
+async function checkVoltageConnection() {
+  if (!isVoltageConfigured()) {
+    return {
+      connected: false,
+      reason: 'Voltage API not configured',
+      using_mock: true,
+    };
+  }
+  
+  try {
+    const nodeInfo = await getNodeInfo();
+    return {
+      connected: true,
+      node_pubkey: nodeInfo.pubkey,
+      alias: nodeInfo.alias,
+      network: nodeInfo.network,
+      using_mock: false,
+    };
+  } catch (err) {
+    return {
+      connected: false,
+      reason: err.message,
+      using_mock: true,
+    };
+  }
 }
 
 module.exports = {
@@ -366,6 +562,10 @@ module.exports = {
   payInvoice,
   getNodeInfo,
   mockInvoices,
+  
+  // Voltage helpers
+  isVoltageConfigured,
+  checkVoltageConnection,
   
   // LNURL-auth functions
   generateAuthChallenge,

@@ -3325,3 +3325,157 @@ label {
     grid-template-columns: 1fr;
   }
 }
+
+/* ==================== ENHANCED WALLET DEPOSIT STYLES ==================== */
+.deposit-amount-input {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.deposit-amount-input input {
+  flex: 1;
+  margin-bottom: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.sats-label {
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.deposit-presets {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.deposit-presets .btn {
+  flex: 1;
+  min-width: 60px;
+}
+
+.deposit-success {
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.deposit-success .success-icon {
+  margin-bottom: 1rem;
+}
+
+.deposit-success p {
+  font-size: 1.125rem;
+  color: var(--text-bright);
+  margin-bottom: 0.5rem;
+}
+
+.success-amount {
+  font-size: 1.5rem !important;
+  font-weight: 700;
+  color: var(--yes-color) !important;
+}
+
+.deposit-invoice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.real-invoice-badge {
+  background: linear-gradient(135deg, var(--accent) 0%, #e67e00 100%);
+  color: #000;
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  box-shadow: 0 2px 10px rgba(247, 147, 26, 0.3);
+}
+
+.invoice-qr-container {
+  background: white;
+  padding: 1rem;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 20px rgba(247, 147, 26, 0.2);
+}
+
+.invoice-qr {
+  display: block;
+}
+
+.invoice-amount {
+  font-size: 1.5rem;
+  color: var(--accent);
+  text-align: center;
+}
+
+.invoice-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+}
+
+.spinner-small {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.invoice-actions {
+  display: flex;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 300px;
+}
+
+.invoice-actions .btn {
+  flex: 1;
+  text-decoration: none;
+  text-align: center;
+}
+
+.invoice-text {
+  background: var(--bg-input);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  width: 100%;
+  text-align: center;
+}
+
+.invoice-text code {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+}
+
+.test-mode-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: rgba(38, 166, 65, 0.1);
+  border: 1px solid rgba(38, 166, 65, 0.3);
+  border-radius: var(--radius-md);
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+.test-mode-note {
+  color: var(--yes-color);
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0;
+}
