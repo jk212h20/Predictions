@@ -233,7 +233,9 @@ app.get('/api/auth/google-client-id', (req, res) => {
 
 // Generate LNURL-auth challenge (returns QR code data)
 app.get('/api/auth/lnurl', (req, res) => {
-  const baseUrl = process.env.API_URL || `http://localhost:${PORT}`;
+  // Use API_URL if set, otherwise use Railway's public domain, otherwise localhost
+  const baseUrl = process.env.API_URL || 
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : `http://localhost:${PORT}`);
   const challenge = lightning.generateAuthChallenge(db, baseUrl);
   res.json(challenge);
 });
