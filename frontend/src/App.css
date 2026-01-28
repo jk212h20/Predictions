@@ -2114,6 +2114,61 @@ label {
   color: var(--yes-color) !important;
 }
 
+/* Add Point Controls */
+.add-point-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.add-point-controls label {
+  font-weight: 500;
+  margin-bottom: 0;
+  color: var(--text);
+}
+
+.add-point-controls input {
+  margin-bottom: 0;
+  padding: 0.375rem 0.5rem;
+}
+
+.add-point-controls span {
+  color: var(--text-muted);
+}
+
+/* Delete Point Button */
+.delete-point {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: var(--no-color);
+  color: white;
+  border-radius: 50%;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 10;
+}
+
+.curve-bar-container:hover .delete-point {
+  opacity: 1;
+}
+
+.delete-point:hover {
+  background: var(--no-hover);
+  transform: scale(1.1);
+}
+
 /* Config Preview - Pullback Explanation */
 .pullback-explanation {
   font-size: 0.875rem;

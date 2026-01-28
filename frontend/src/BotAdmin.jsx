@@ -412,17 +412,17 @@ export default function BotAdmin({ onClose }) {
             </div>
           )}
 
-          {/* CURVE EDITOR TAB - Now shows percentages that total 100% */}
+          {/* CURVE EDITOR TAB - Dynamic points with percentages that total 100% */}
           {activeTab === 'curve' && (
             <div className="bot-curve-editor">
               <div className="curve-info">
                 <p>
-                  <strong>Shape your curve!</strong> Drag the bars to set the distribution of liquidity across prices.
-                  Bars show <strong>percentages that always total 100%</strong>. When you raise one bar, others automatically decrease.
+                  <strong>Shape your curve!</strong> Drag bars to adjust. Bars show <strong>percentages that total 100%</strong>.
+                  Points at 0% stay at 0% when you adjust others. Add points at any price, delete points you don't need.
                 </p>
               </div>
 
-              {/* PRESET BUTTONS - Load normalized shapes */}
+              {/* PRESET BUTTONS + ADD POINT */}
               <div className="curve-presets">
                 <button 
                   className="btn btn-small"
@@ -431,12 +431,11 @@ export default function BotAdmin({ onClose }) {
                       const result = await api.previewShape('flat', {});
                       setCurvePoints(result.normalized_points.map(p => ({ price: p.price, weight: p.weight })));
                     } catch (err) {
-                      // Fallback - equal distribution
                       setCurvePoints([5,10,15,20,25,30,35,40,45,50].map(p => ({ price: p, weight: 0.1 })));
                     }
                   }}
                 >
-                  📏 Flat (Equal)
+                  📏 Flat
                 </button>
                 <button 
                   className="btn btn-small"
@@ -444,12 +443,10 @@ export default function BotAdmin({ onClose }) {
                     try {
                       const result = await api.previewShape('bell', { mu: 20, sigma: 15 });
                       setCurvePoints(result.normalized_points.map(p => ({ price: p.price, weight: p.weight })));
-                    } catch (err) {
-                      console.error('Bell preview failed:', err);
-                    }
+                    } catch (err) { console.error(err); }
                   }}
                 >
-                  🔔 Bell (Peak at 20%)
+                  🔔 Bell
                 </button>
                 <button 
                   className="btn btn-small"
@@ -457,9 +454,7 @@ export default function BotAdmin({ onClose }) {
                     try {
                       const result = await api.previewShape('exponential', { decay: 0.08 });
                       setCurvePoints(result.normalized_points.map(p => ({ price: p.price, weight: p.weight })));
-                    } catch (err) {
-                      console.error('Exponential preview failed:', err);
-                    }
+                    } catch (err) { console.error(err); }
                   }}
                 >
                   📉 Exponential
@@ -468,31 +463,51 @@ export default function BotAdmin({ onClose }) {
                   className="btn btn-small"
                   onClick={async () => {
                     try {
-                      const result = await api.previewShape('sigmoid', { midpoint: 25, steepness: 0.3 });
-                      setCurvePoints(result.normalized_points.map(p => ({ price: p.price, weight: p.weight })));
-                    } catch (err) {
-                      console.error('Sigmoid preview failed:', err);
-                    }
-                  }}
-                >
-                  〰️ Sigmoid
-                </button>
-                <button 
-                  className="btn btn-small"
-                  onClick={async () => {
-                    try {
                       const result = await api.previewShape('parabolic', { maxPrice: 55 });
                       setCurvePoints(result.normalized_points.map(p => ({ price: p.price, weight: p.weight })));
-                    } catch (err) {
-                      console.error('Parabolic preview failed:', err);
-                    }
+                    } catch (err) { console.error(err); }
                   }}
                 >
                   ⌒ Parabolic
                 </button>
               </div>
 
-              {/* DRAWABLE CURVE - Shows percentages */}
+              {/* ADD POINT CONTROLS */}
+              <div className="add-point-controls">
+                <label>Add Point:</label>
+                <input 
+                  type="number"
+                  min="1"
+                  max="99"
+                  value={newPoint.price}
+                  onChange={e => setNewPoint({ ...newPoint, price: parseInt(e.target.value) || 1 })}
+                  style={{ width: '60px' }}
+                />
+                <span>%</span>
+                <button 
+                  className="btn btn-small btn-success"
+                  onClick={() => {
+                    const price = newPoint.price;
+                    if (price < 1 || price > 99) {
+                      alert('Price must be 1-99%');
+                      return;
+                    }
+                    if (curvePoints.some(p => p.price === price)) {
+                      alert('Point already exists at this price');
+                      return;
+                    }
+                    // Add new point at 0%, then normalize
+                    setCurvePoints(prev => {
+                      const newPoints = [...prev, { price, weight: 0 }].sort((a, b) => a.price - b.price);
+                      return newPoints;
+                    });
+                  }}
+                >
+                  + Add
+                </button>
+              </div>
+
+              {/* DRAWABLE CURVE - Dynamic points */}
               <div className="curve-drawable">
                 <div className="curve-y-axis">
                   <span>50%</span>
@@ -501,63 +516,52 @@ export default function BotAdmin({ onClose }) {
                   <span>0%</span>
                 </div>
                 <div className="curve-canvas">
-                  {[5,10,15,20,25,30,35,40,45,50].map(price => {
-                    const point = curvePoints.find(p => p.price === price);
-                    const weight = point?.weight || 0;
-                    // Display up to 50% max height (cap at 50% for visual clarity)
+                  {curvePoints.sort((a, b) => a.price - b.price).map(point => {
+                    const weight = point.weight || 0;
                     const heightPercent = Math.min((weight / 0.5) * 100, 100);
                     const displayPercent = (weight * 100).toFixed(1);
                     
                     return (
                       <div 
-                        key={price}
+                        key={point.price}
                         className="curve-bar-container"
                         onMouseDown={(e) => {
+                          // Prevent drag if clicking delete button
+                          if (e.target.classList.contains('delete-point')) return;
+                          
                           const rect = e.currentTarget.getBoundingClientRect();
                           const updateWeight = (clientY) => {
                             const relativeY = rect.bottom - clientY;
-                            // Map to 0-50% range
                             let newWeight = Math.max(0, Math.min(0.5, (relativeY / rect.height) * 0.5));
-                            // Round to nearest 0.5%
-                            newWeight = Math.round(newWeight * 200) / 200;
+                            newWeight = Math.round(newWeight * 200) / 200; // Round to 0.5%
                             
                             setCurvePoints(prev => {
-                              // Get current state
-                              const prices = [5,10,15,20,25,30,35,40,45,50];
-                              let points = prices.map(p => {
-                                const existing = prev.find(pt => pt.price === p);
-                                return { price: p, weight: existing?.weight || 0.1 };
-                              });
+                              let points = [...prev];
+                              const idx = points.findIndex(p => p.price === point.price);
+                              if (idx === -1) return prev;
                               
-                              // Find current point's old weight
-                              const currentPoint = points.find(p => p.price === price);
-                              const oldWeight = currentPoint?.weight || 0.1;
-                              const weightDiff = newWeight - oldWeight;
+                              const oldWeight = points[idx].weight || 0;
                               
-                              // Calculate total of OTHER points
-                              const otherPoints = points.filter(p => p.price !== price);
+                              // Calculate sum of OTHER non-zero points
+                              const otherPoints = points.filter((p, i) => i !== idx && p.weight > 0);
                               const otherTotal = otherPoints.reduce((sum, p) => sum + p.weight, 0);
                               
-                              // Distribute the difference among other points proportionally
-                              if (otherTotal > 0 && weightDiff !== 0) {
-                                const remaining = 1 - newWeight;
+                              // Set this point's new weight
+                              points[idx] = { ...points[idx], weight: newWeight };
+                              
+                              // Scale OTHER non-zero points proportionally to keep sum = 1
+                              // Points at 0 stay at 0 (they're not in otherPoints)
+                              if (otherTotal > 0) {
+                                const remaining = Math.max(0, 1 - newWeight);
                                 const scale = remaining / otherTotal;
-                                
-                                points = points.map(p => {
-                                  if (p.price === price) {
-                                    return { ...p, weight: newWeight };
-                                  } else {
-                                    return { ...p, weight: Math.max(0, p.weight * scale) };
-                                  }
+                                points = points.map((p, i) => {
+                                  if (i === idx) return p; // Already set
+                                  if (p.weight === 0) return p; // Stay at 0
+                                  return { ...p, weight: p.weight * scale };
                                 });
-                              } else {
-                                // Just update the current point
-                                points = points.map(p => 
-                                  p.price === price ? { ...p, weight: newWeight } : p
-                                );
                               }
                               
-                              // Ensure they sum to 1.0
+                              // Final normalization
                               const total = points.reduce((sum, p) => sum + p.weight, 0);
                               if (total > 0 && Math.abs(total - 1) > 0.001) {
                                 points = points.map(p => ({ ...p, weight: p.weight / total }));
@@ -579,40 +583,60 @@ export default function BotAdmin({ onClose }) {
                           window.addEventListener('mouseup', handleMouseUp);
                         }}
                       >
+                        <button 
+                          className="delete-point"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (curvePoints.length <= 1) {
+                              alert('Must have at least 1 point');
+                              return;
+                            }
+                            setCurvePoints(prev => {
+                              const remaining = prev.filter(p => p.price !== point.price);
+                              // Renormalize
+                              const total = remaining.reduce((sum, p) => sum + p.weight, 0);
+                              if (total > 0) {
+                                return remaining.map(p => ({ ...p, weight: p.weight / total }));
+                              }
+                              return remaining;
+                            });
+                          }}
+                          title="Delete this point"
+                        >
+                          ×
+                        </button>
                         <div 
                           className="curve-bar-fill"
                           style={{ height: `${heightPercent}%` }}
                         >
                           <span className="bar-amount">{weight > 0.005 ? `${displayPercent}%` : ''}</span>
                         </div>
-                        <span className="bar-price">{price}%</span>
+                        <span className="bar-price">{point.price}%</span>
                       </div>
                     );
                   })}
                 </div>
               </div>
 
-              {/* SUMMARY - Always shows 100% total */}
+              {/* SUMMARY */}
               <div className="curve-summary">
                 <div className="summary-stat">
-                  <label>Total Distribution</label>
-                  <value className="total-100">100%</value>
+                  <label>Total</label>
+                  <value className="total-100">{(curvePoints.reduce((s, p) => s + (p.weight || 0), 0) * 100).toFixed(0)}%</value>
                 </div>
                 <div className="summary-stat">
-                  <label>Active Price Points</label>
+                  <label>Points</label>
+                  <value>{curvePoints.length}</value>
+                </div>
+                <div className="summary-stat">
+                  <label>Active (non-zero)</label>
                   <value>{curvePoints.filter(p => p.weight > 0.005).length}</value>
-                </div>
-                <div className="summary-stat">
-                  <label>Peak Allocation</label>
-                  <value>{curvePoints.length > 0 ? `${(Math.max(...curvePoints.map(p => p.weight)) * 100).toFixed(1)}%` : '-'}</value>
                 </div>
               </div>
 
               <div className="curve-note">
                 <p>
-                  💡 This curve shape will be applied to ALL markets. The actual sats per order are calculated as:
-                  <br />
-                  <code>total_liquidity × market_weight × shape_percentage</code>
+                  💡 Shape is saved as normalized weights. Actual sats = <code>total_liquidity × market_weight × shape_%</code>
                 </p>
               </div>
 
@@ -624,9 +648,6 @@ export default function BotAdmin({ onClose }) {
                 >
                   {saving ? 'Saving...' : '💾 Save Curve Shape'}
                 </button>
-                <p className="save-note">
-                  After saving, go to the Deploy tab to preview and deploy orders.
-                </p>
               </div>
             </div>
           )}
