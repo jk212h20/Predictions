@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import * as api from './api';
+import BotAdmin from './BotAdmin';
 import './App.css';
 
 // Constants
@@ -28,8 +30,26 @@ function useAuth() {
     }
   }, []);
 
-  const login = async (email, username) => {
-    const { token, user } = await api.demoLogin(email, username);
+  const login = async (email, password) => {
+    const { token, user } = await api.login(email, password);
+    localStorage.setItem('token', token);
+    setUser(user);
+  };
+
+  const register = async (email, password, username) => {
+    const { token, user } = await api.register(email, password, username);
+    localStorage.setItem('token', token);
+    setUser(user);
+  };
+
+  const googleLogin = async (credential) => {
+    const { token, user } = await api.googleLogin(credential);
+    localStorage.setItem('token', token);
+    setUser(user);
+  };
+
+  const lightningLogin = async (k1) => {
+    const { token, user } = await api.completeLnurlAuth(k1);
     localStorage.setItem('token', token);
     setUser(user);
   };
@@ -46,12 +66,12 @@ function useAuth() {
     }
   };
 
-  return { user, loading, login, logout, refreshBalance };
+  return { user, loading, login, register, googleLogin, lightningLogin, logout, refreshBalance };
 }
 
 // ==================== COMPONENTS ====================
 
-function Header({ user, onLogout, onShowWallet, onShowAdmin }) {
+function Header({ user, onLogout, onShowWallet, onShowPortfolio, onShowAdmin, onShowBotAdmin, onShowLogin }) {
   return (
     <header className="header">
       <div className="header-left">
@@ -64,41 +84,285 @@ function Header({ user, onLogout, onShowWallet, onShowAdmin }) {
             <span className="balance" onClick={onShowWallet}>
               ⚡ {formatSats(user.balance_sats)} sats
             </span>
+            <button className="btn btn-small btn-portfolio" onClick={onShowPortfolio}>
+              📊 Portfolio
+            </button>
             <span className="username">{user.username || user.email}</span>
             {user.is_admin === 1 && (
-              <button className="btn btn-small" onClick={onShowAdmin}>Admin</button>
+              <>
+                <button className="btn btn-small btn-bot" onClick={onShowBotAdmin}>🤖 Bot</button>
+                <button className="btn btn-small" onClick={onShowAdmin}>Admin</button>
+              </>
             )}
             <button className="btn btn-small btn-outline" onClick={onLogout}>Logout</button>
           </>
         ) : (
-          <span className="login-prompt">Login to trade</span>
+          <button className="btn btn-small btn-login" onClick={onShowLogin}>Login to trade ⚡</button>
         )}
       </div>
     </header>
   );
 }
 
-function LoginModal({ onLogin, onClose }) {
+// Lightning Login Modal with QR code and polling
+function LightningLoginModal({ onComplete, onClose }) {
+  const [challenge, setChallenge] = useState(null);
+  const [status, setStatus] = useState('loading'); // loading, ready, polling, verified, error
+  const [error, setError] = useState('');
+  const pollingRef = useRef(null);
+
+  // Generate challenge on mount
+  useEffect(() => {
+    generateChallenge();
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
+
+  const generateChallenge = async () => {
+    setStatus('loading');
+    setError('');
+    try {
+      const data = await api.getLnurlAuthChallenge();
+      setChallenge(data);
+      setStatus('ready');
+      startPolling(data.k1);
+    } catch (err) {
+      setError(err.message);
+      setStatus('error');
+    }
+  };
+
+  const startPolling = (k1) => {
+    // Poll every 2 seconds
+    pollingRef.current = setInterval(async () => {
+      try {
+        const statusData = await api.getLnurlAuthStatus(k1);
+        if (statusData.status === 'verified') {
+          clearInterval(pollingRef.current);
+          setStatus('verified');
+          // Complete the login
+          await onComplete(k1);
+          onClose();
+        } else if (statusData.status === 'expired') {
+          clearInterval(pollingRef.current);
+          setError('Challenge expired. Please try again.');
+          setStatus('error');
+        }
+      } catch (err) {
+        console.error('Polling error:', err);
+      }
+    }, 2000);
+  };
+
+  const handleCopyLnurl = () => {
+    if (challenge?.encoded) {
+      navigator.clipboard.writeText(challenge.encoded);
+      alert('LNURL copied to clipboard!');
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal lightning-modal" onClick={e => e.stopPropagation()}>
+        <h2>⚡ Login with Lightning</h2>
+        
+        {status === 'loading' && (
+          <div className="lightning-loading">
+            <div className="spinner"></div>
+            <p>Generating login challenge...</p>
+          </div>
+        )}
+
+        {status === 'error' && (
+          <div className="lightning-error">
+            <p className="auth-error">{error}</p>
+            <button className="btn btn-primary" onClick={generateChallenge}>
+              Try Again
+            </button>
+          </div>
+        )}
+
+        {(status === 'ready' || status === 'polling') && challenge && (
+          <div className="lightning-qr-container">
+            <p className="lightning-instructions">
+              Scan this QR code with your Lightning wallet<br />
+              <span className="lightning-hint">(Phoenix, Alby, Zeus, Wallet of Satoshi, etc.)</span>
+            </p>
+            
+            <div className="qr-wrapper">
+              <QRCodeSVG 
+                value={challenge.uri}
+                size={256}
+                level="M"
+                includeMargin={true}
+                className="lightning-qr"
+              />
+            </div>
+
+            <div className="lightning-waiting">
+              <div className="pulse-dot"></div>
+              <span>Waiting for wallet signature...</span>
+            </div>
+
+            <div className="lightning-actions">
+              <a 
+                href={challenge.uri} 
+                className="btn btn-primary btn-lightning-open"
+              >
+                Open in Wallet App
+              </a>
+              <button 
+                className="btn btn-outline"
+                onClick={handleCopyLnurl}
+              >
+                Copy LNURL
+              </button>
+            </div>
+
+            <p className="lightning-note">
+              No account needed! Your Lightning wallet creates a unique, private login key for this site.
+            </p>
+          </div>
+        )}
+
+        {status === 'verified' && (
+          <div className="lightning-success">
+            <div className="success-icon">✓</div>
+            <p>Signature verified! Logging you in...</p>
+          </div>
+        )}
+
+        <button className="btn btn-outline modal-close" onClick={onClose}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function LoginModal({ onLogin, onRegister, onGoogleLogin, onLightningLogin, onClose, onSwitchToLightning }) {
+  const [mode, setMode] = useState('login'); // 'login' or 'register'
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [username, setUsername] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [googleClientId, setGoogleClientId] = useState(null);
+  const googleButtonRef = useRef(null);
+
+  // Load Google Sign-In
+  useEffect(() => {
+    const loadGoogleSignIn = async () => {
+      try {
+        const { clientId } = await api.getGoogleClientId();
+        setGoogleClientId(clientId);
+      } catch (err) {
+        // Google OAuth not configured, that's okay
+        console.log('Google OAuth not configured');
+      }
+    };
+    loadGoogleSignIn();
+  }, []);
+
+  // Initialize Google Sign-In button when clientId is available
+  useEffect(() => {
+    if (!googleClientId || !googleButtonRef.current) return;
+
+    // Load Google Identity Services script
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+      if (window.google) {
+        window.google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: handleGoogleResponse,
+        });
+        window.google.accounts.id.renderButton(
+          googleButtonRef.current,
+          { 
+            theme: 'filled_black', 
+            size: 'large', 
+            width: '100%',
+            text: 'continue_with'
+          }
+        );
+      }
+    };
+    document.body.appendChild(script);
+
+    return () => {
+      // Cleanup
+      const existingScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+      if (existingScript) existingScript.remove();
+    };
+  }, [googleClientId]);
+
+  const handleGoogleResponse = async (response) => {
+    setLoading(true);
+    setError('');
+    try {
+      await onGoogleLogin(response.credential);
+      onClose();
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
+    
+    if (mode === 'register') {
+      if (password !== confirmPassword) {
+        setError('Passwords do not match');
+        return;
+      }
+      if (password.length < 6) {
+        setError('Password must be at least 6 characters');
+        return;
+      }
+    }
+    
     setLoading(true);
     try {
-      await onLogin(email, username);
+      if (mode === 'login') {
+        await onLogin(email, password);
+      } else {
+        await onRegister(email, password, username);
+      }
       onClose();
     } catch (err) {
-      alert(err.message);
+      setError(err.message);
     }
     setLoading(false);
+  };
+
+  const switchMode = () => {
+    setMode(mode === 'login' ? 'register' : 'login');
+    setError('');
+    setPassword('');
+    setConfirmPassword('');
   };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
-        <h2>Login / Sign Up</h2>
+        <h2>{mode === 'login' ? 'Login' : 'Create Account'}</h2>
+        
+        {googleClientId && (
+          <>
+            <div ref={googleButtonRef} className="google-signin-btn"></div>
+            <div className="login-divider">
+              <span>or continue with email</span>
+            </div>
+          </>
+        )}
+        
+        {error && <div className="auth-error">{error}</div>}
+        
         <form onSubmit={handleSubmit}>
           <input
             type="email"
@@ -106,19 +370,72 @@ function LoginModal({ onLogin, onClose }) {
             value={email}
             onChange={e => setEmail(e.target.value)}
             required
+            autoComplete="email"
           />
+          
           <input
-            type="text"
-            placeholder="Username (optional)"
-            value={username}
-            onChange={e => setUsername(e.target.value)}
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            required
+            minLength={6}
+            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
           />
+          
+          {mode === 'register' && (
+            <>
+              <input
+                type="password"
+                placeholder="Confirm Password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                required
+                minLength={6}
+                autoComplete="new-password"
+              />
+              <input
+                type="text"
+                placeholder="Username (optional)"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                autoComplete="username"
+              />
+            </>
+          )}
+          
           <button type="submit" className="btn btn-primary" disabled={loading}>
-            {loading ? 'Loading...' : 'Continue'}
+            {loading ? 'Loading...' : (mode === 'login' ? 'Login' : 'Create Account')}
           </button>
         </form>
-        <p className="modal-note">
-          Demo mode: Enter any email to create an account with 100,000 sats.
+        
+        <div className="auth-switch">
+          {mode === 'login' ? (
+            <p>Don't have an account? <button type="button" onClick={switchMode}>Sign up</button></p>
+          ) : (
+            <p>Already have an account? <button type="button" onClick={switchMode}>Login</button></p>
+          )}
+        </div>
+        
+        {mode === 'register' && (
+          <p className="modal-note">
+            New accounts receive 100,000 sats for testing.
+          </p>
+        )}
+
+        <div className="login-divider">
+          <span>or</span>
+        </div>
+        
+        <button 
+          type="button" 
+          className="btn btn-lightning-login"
+          onClick={onSwitchToLightning}
+        >
+          ⚡ Login with Lightning
+        </button>
+        <p className="lightning-login-hint">
+          No email needed — sign in with your Lightning wallet
         </p>
       </div>
     </div>
@@ -356,7 +673,7 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
   );
 }
 
-function GMBrowser({ grandmasters, onSelectGM, marketType, setMarketType }) {
+function ParticipantBrowser({ grandmasters, onSelectGM }) {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('odds'); // 'odds' or 'rating'
 
@@ -374,27 +691,13 @@ function GMBrowser({ grandmasters, onSelectGM, marketType, setMarketType }) {
   return (
     <div className="gm-browser">
       <div className="gm-browser-header">
-        <h2>♟️ Grandmaster Markets</h2>
-        <div className="market-type-toggle">
-          <button 
-            className={marketType === 'attendance' ? 'active' : ''}
-            onClick={() => setMarketType('attendance')}
-          >
-            Attendance
-          </button>
-          <button 
-            className={marketType === 'winner' ? 'active' : ''}
-            onClick={() => setMarketType('winner')}
-          >
-            Winner
-          </button>
-        </div>
+        <h2>♟️ Who Will Participate</h2>
       </div>
       
       <div className="gm-controls">
         <input
           type="text"
-          placeholder="Search grandmaster..."
+          placeholder="Search participant..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="gm-search"
@@ -410,7 +713,7 @@ function GMBrowser({ grandmasters, onSelectGM, marketType, setMarketType }) {
           <div 
             key={gm.id} 
             className="gm-card"
-            onClick={() => onSelectGM(gm, marketType)}
+            onClick={() => onSelectGM(gm, 'attendance')}
           >
             <div className="gm-info">
               <span className="gm-name">{gm.name}</span>
@@ -419,6 +722,155 @@ function GMBrowser({ grandmasters, onSelectGM, marketType, setMarketType }) {
             <div className="gm-odds">
               {gm.attendance_yes_price ? (
                 <span className="odds-badge">{gm.attendance_yes_price}%</span>
+              ) : (
+                <span className="odds-badge empty">--</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WhatsThePoint({ onClose }) {
+  return (
+    <div className="whats-the-point">
+      <button className="btn btn-outline back-btn" onClick={onClose}>← Back to Markets</button>
+      
+      <h2>🎯 What's the Point?</h2>
+      
+      <div className="point-section">
+        <h3>💡 This Prediction Market Creates Real Incentives</h3>
+        <p>
+          Unlike traditional betting, this prediction market serves a unique purpose: <strong>helping make the Bitcoin Chess 960 Championship actually happen</strong> by creating financial incentives for participants.
+        </p>
+      </div>
+
+      <div className="point-section">
+        <h3>♟️ For Chess Players</h3>
+        <p>
+          If you're a grandmaster or strong player considering attending, you can <strong>bet YES on yourself</strong>. Here's why this matters:
+        </p>
+        <ul>
+          <li><strong>Show your commitment</strong> — A YES bet signals you're serious about attending</li>
+          <li><strong>Get paid for showing up</strong> — If you bet YES on attending and you do attend, you win your bet!</li>
+          <li><strong>Low-risk for participants</strong> — You control whether you attend, so a YES bet on yourself is essentially a commitment bonus</li>
+        </ul>
+        <div className="example-box">
+          <strong>Example:</strong> Magnus bets 100,000 sats that he'll attend at 70% odds. If he shows up, he wins ~43,000 sats profit. It's like getting paid to attend!
+        </div>
+      </div>
+
+      <div className="point-section">
+        <h3>🏦 For Event Organizers</h3>
+        <p>
+          The organizers provide liquidity on the <strong>NO side</strong> of attendance markets. This means:
+        </p>
+        <ul>
+          <li><strong>If a player attends</strong> — Organizers pay out the YES bettors, but they've successfully recruited a participant</li>
+          <li><strong>If a player doesn't attend</strong> — Organizers keep the stakes from YES bettors</li>
+          <li><strong>Either way, the market generates buzz</strong> — People tracking odds = free marketing</li>
+        </ul>
+      </div>
+
+      <div className="point-section">
+        <h3>📊 For Spectators & Fans</h3>
+        <p>
+          Even if you're not playing, you can:
+        </p>
+        <ul>
+          <li><strong>Bet on who will attend</strong> — Think a top player will come? Put sats on it!</li>
+          <li><strong>Bet on who will win</strong> — Show your chess knowledge by predicting the champion</li>
+          <li><strong>Track the action</strong> — Market odds give real-time insight into who's likely coming</li>
+        </ul>
+      </div>
+
+      <div className="point-section">
+        <h3>⚡ Why Bitcoin?</h3>
+        <p>
+          All trades happen in <strong>satoshis</strong> (the smallest unit of Bitcoin) via the <strong>Lightning Network</strong>:
+        </p>
+        <ul>
+          <li><strong>Instant settlements</strong> — No waiting days for payouts</li>
+          <li><strong>Global access</strong> — Anyone in the world can participate</li>
+          <li><strong>Low fees</strong> — Lightning makes micropayments practical</li>
+          <li><strong>Self-custody</strong> — Your keys, your coins</li>
+        </ul>
+      </div>
+
+      <div className="point-section highlight">
+        <h3>🤝 The Win-Win</h3>
+        <p>
+          This isn't just gambling — it's a <strong>coordination mechanism</strong>. The prediction market:
+        </p>
+        <ul>
+          <li>Gives players a financial reason to commit early</li>
+          <li>Gives organizers a recruitment tool that pays for itself</li>
+          <li>Gives fans a stake in the outcome and a reason to follow along</li>
+          <li>Creates transparent, real-time signals about who's likely to participate</li>
+        </ul>
+        <p className="tldr">
+          <strong>TL;DR:</strong> Bet YES on yourself if you're coming. Bet on your favorite players if you're watching. Everyone wins when the event succeeds! 🏆
+        </p>
+      </div>
+
+      <button className="btn btn-primary btn-large" onClick={onClose}>
+        Got it — Let's Trade! ⚡
+      </button>
+    </div>
+  );
+}
+
+function WinnerBrowser({ grandmasters, onSelectGM }) {
+  const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('odds'); // 'odds' or 'rating'
+
+  const filtered = grandmasters
+    .filter(gm => gm.name.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => {
+      if (sortBy === 'odds') {
+        const aOdds = a.winner_yes_price || 0;
+        const bOdds = b.winner_yes_price || 0;
+        return bOdds - aOdds; // Higher odds first
+      }
+      return b.fide_rating - a.fide_rating; // Higher rating first
+    });
+
+  return (
+    <div className="gm-browser winner-browser">
+      <div className="gm-browser-header">
+        <h2>🏆 Who Will Win</h2>
+      </div>
+      
+      <div className="gm-controls">
+        <input
+          type="text"
+          placeholder="Search participant..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="gm-search"
+        />
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)}>
+          <option value="odds">Sort by Odds</option>
+          <option value="rating">Sort by Rating</option>
+        </select>
+      </div>
+      
+      <div className="gm-list">
+        {filtered.map(gm => (
+          <div 
+            key={gm.id} 
+            className="gm-card"
+            onClick={() => onSelectGM(gm, 'winner')}
+          >
+            <div className="gm-info">
+              <span className="gm-name">{gm.name}</span>
+              <span className="gm-details">{gm.country} • {gm.fide_rating}</span>
+            </div>
+            <div className="gm-odds">
+              {gm.winner_yes_price ? (
+                <span className="odds-badge odds-win">{gm.winner_yes_price}%</span>
               ) : (
                 <span className="odds-badge empty">--</span>
               )}
@@ -581,6 +1033,377 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
   );
 }
 
+function PortfolioModal({ user, onClose, onRefresh }) {
+  const [activeTab, setActiveTab] = useState('positions');
+  const [positions, setPositions] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [trades, setTrades] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [txFilter, setTxFilter] = useState('');
+  const [cancelling, setCancelling] = useState(null);
+
+  useEffect(() => {
+    loadPortfolioData();
+  }, []);
+
+  const loadPortfolioData = async () => {
+    setLoading(true);
+    try {
+      const [posData, ordData, txData, tradeData] = await Promise.all([
+        api.getPositions(),
+        api.getOpenOrders(),
+        api.getTransactions({ limit: 50 }),
+        api.getTrades({ limit: 50 }),
+      ]);
+      setPositions(posData);
+      setOrders(ordData);
+      setTransactions(txData.transactions);
+      setTrades(tradeData.trades);
+    } catch (err) {
+      console.error('Failed to load portfolio:', err);
+    }
+    setLoading(false);
+  };
+
+  const handleCancelOrder = async (orderId) => {
+    if (!confirm('Are you sure you want to cancel this order?')) return;
+    setCancelling(orderId);
+    try {
+      await api.cancelOrder(orderId);
+      await loadPortfolioData();
+      await onRefresh();
+    } catch (err) {
+      alert(err.message);
+    }
+    setCancelling(null);
+  };
+
+  const handleCancelAllOrders = async () => {
+    if (orders.length === 0) {
+      alert('No open orders to cancel');
+      return;
+    }
+    if (!confirm(`Are you sure you want to cancel ALL ${orders.length} open orders?`)) return;
+    setCancelling('all');
+    try {
+      const result = await api.cancelAllOrders();
+      alert(`Cancelled ${result.ordersCancelled} orders. Refunded ${formatSats(result.refund)} sats.`);
+      await loadPortfolioData();
+      await onRefresh();
+    } catch (err) {
+      alert(err.message);
+    }
+    setCancelling(null);
+  };
+
+  const filteredTransactions = txFilter 
+    ? transactions.filter(t => t.type === txFilter)
+    : transactions;
+
+  // Calculate total value of positions
+  const totalPositionValue = positions.reduce((sum, p) => sum + p.amount_sats, 0);
+  const totalOrdersLocked = orders.reduce((sum, o) => {
+    const remaining = o.amount_sats - o.filled_sats;
+    return sum + (o.side === 'yes' 
+      ? Math.ceil(remaining * o.price_cents / 100)
+      : Math.ceil(remaining * (100 - o.price_cents) / 100));
+  }, 0);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-fullscreen" onClick={e => e.stopPropagation()}>
+        <h2>📊 Portfolio</h2>
+        
+        <div className="portfolio-summary">
+          <div className="summary-item">
+            <span className="summary-label">Available Balance</span>
+            <span className="summary-value">{formatSats(user.balance_sats)} sats</span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">In Open Orders</span>
+            <span className="summary-value">{formatSats(totalOrdersLocked)} sats</span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">Active Positions</span>
+            <span className="summary-value">{positions.length} bets</span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">Position Value</span>
+            <span className="summary-value">{formatSats(totalPositionValue)} sats</span>
+          </div>
+        </div>
+
+        <div className="portfolio-tabs">
+          <button 
+            className={activeTab === 'positions' ? 'active' : ''} 
+            onClick={() => setActiveTab('positions')}
+          >
+            Positions ({positions.length})
+          </button>
+          <button 
+            className={activeTab === 'orders' ? 'active' : ''} 
+            onClick={() => setActiveTab('orders')}
+          >
+            Open Orders ({orders.length})
+          </button>
+          <button 
+            className={activeTab === 'trades' ? 'active' : ''} 
+            onClick={() => setActiveTab('trades')}
+          >
+            Trade History
+          </button>
+          <button 
+            className={activeTab === 'transactions' ? 'active' : ''} 
+            onClick={() => setActiveTab('transactions')}
+          >
+            Transactions
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="portfolio-loading">Loading...</div>
+        ) : (
+          <div className="portfolio-content">
+            {/* POSITIONS TAB */}
+            {activeTab === 'positions' && (
+              <div className="portfolio-positions">
+                {positions.length === 0 ? (
+                  <div className="empty-state">
+                    <p>No active positions</p>
+                    <p className="empty-hint">Place trades on markets to see your positions here.</p>
+                  </div>
+                ) : (
+                  <table className="portfolio-table">
+                    <thead>
+                      <tr>
+                        <th>Market</th>
+                        <th>Side</th>
+                        <th>Price</th>
+                        <th>Amount</th>
+                        <th>Potential Payout</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {positions.map(p => (
+                        <tr key={p.id}>
+                          <td className="market-cell">{p.title}</td>
+                          <td>
+                            <span className={`side-badge side-${p.side}`}>
+                              {p.side.toUpperCase()}
+                            </span>
+                          </td>
+                          <td>{p.price_cents}%</td>
+                          <td>{formatSats(p.amount_sats)} sats</td>
+                          <td className="payout-cell">
+                            {formatSats(p.amount_sats)} sats
+                          </td>
+                          <td>
+                            <span className={`status-badge status-${p.market_status}`}>
+                              {p.market_status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+
+            {/* OPEN ORDERS TAB */}
+            {activeTab === 'orders' && (
+              <div className="portfolio-orders">
+                {orders.length > 0 && (
+                  <div className="orders-actions">
+                    <button 
+                      className="btn btn-danger"
+                      onClick={handleCancelAllOrders}
+                      disabled={cancelling === 'all'}
+                    >
+                      {cancelling === 'all' ? 'Cancelling All...' : `Cancel All Orders (${orders.length})`}
+                    </button>
+                  </div>
+                )}
+                {orders.length === 0 ? (
+                  <div className="empty-state">
+                    <p>No open orders</p>
+                    <p className="empty-hint">Your limit orders waiting to be filled will appear here.</p>
+                  </div>
+                ) : (
+                  <table className="portfolio-table">
+                    <thead>
+                      <tr>
+                        <th>Market</th>
+                        <th>Side</th>
+                        <th>Price</th>
+                        <th>Amount</th>
+                        <th>Filled</th>
+                        <th>Created</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {orders.map(o => (
+                        <tr key={o.id}>
+                          <td className="market-cell">
+                            {o.grandmaster_name ? `${o.grandmaster_name}: ` : ''}{o.title}
+                          </td>
+                          <td>
+                            <span className={`side-badge side-${o.side}`}>
+                              {o.side.toUpperCase()}
+                            </span>
+                          </td>
+                          <td>{o.price_cents}%</td>
+                          <td>{formatSats(o.amount_sats)} sats</td>
+                          <td>
+                            {formatSats(o.filled_sats)} / {formatSats(o.amount_sats)}
+                            <div className="fill-bar">
+                              <div 
+                                className="fill-progress" 
+                                style={{ width: `${(o.filled_sats / o.amount_sats) * 100}%` }}
+                              />
+                            </div>
+                          </td>
+                          <td className="date-cell">
+                            {new Date(o.created_at).toLocaleDateString()}
+                          </td>
+                          <td>
+                            <button 
+                              className="btn btn-small btn-danger"
+                              onClick={() => handleCancelOrder(o.id)}
+                              disabled={cancelling === o.id}
+                            >
+                              {cancelling === o.id ? 'Cancelling...' : 'Cancel'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+
+            {/* TRADE HISTORY TAB */}
+            {activeTab === 'trades' && (
+              <div className="portfolio-trades">
+                {trades.length === 0 ? (
+                  <div className="empty-state">
+                    <p>No trade history</p>
+                    <p className="empty-hint">Your matched trades will appear here.</p>
+                  </div>
+                ) : (
+                  <table className="portfolio-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Market</th>
+                        <th>Side</th>
+                        <th>Price</th>
+                        <th>Amount</th>
+                        <th>Result</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {trades.map(t => (
+                        <tr key={t.id} className={t.result !== 'pending' ? `trade-${t.result}` : ''}>
+                          <td className="date-cell">
+                            {new Date(t.created_at).toLocaleDateString()}
+                          </td>
+                          <td className="market-cell">
+                            {t.grandmaster_name ? `${t.grandmaster_name}: ` : ''}{t.market_title}
+                          </td>
+                          <td>
+                            <span className={`side-badge side-${t.user_side}`}>
+                              {t.user_side.toUpperCase()}
+                            </span>
+                          </td>
+                          <td>{t.price_cents}%</td>
+                          <td>{formatSats(t.amount_sats)} sats</td>
+                          <td>
+                            <span className={`result-badge result-${t.result}`}>
+                              {t.result === 'won' && '✓ Won'}
+                              {t.result === 'lost' && '✗ Lost'}
+                              {t.result === 'pending' && '⏳ Pending'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+
+            {/* TRANSACTIONS TAB */}
+            {activeTab === 'transactions' && (
+              <div className="portfolio-transactions">
+                <div className="tx-filters">
+                  <select value={txFilter} onChange={e => setTxFilter(e.target.value)}>
+                    <option value="">All Transactions</option>
+                    <option value="deposit">Deposits</option>
+                    <option value="withdrawal">Withdrawals</option>
+                    <option value="order_placed">Orders Placed</option>
+                    <option value="order_cancelled">Orders Cancelled</option>
+                    <option value="bet_won">Bets Won</option>
+                  </select>
+                </div>
+                
+                {filteredTransactions.length === 0 ? (
+                  <div className="empty-state">
+                    <p>No transactions found</p>
+                  </div>
+                ) : (
+                  <table className="portfolio-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Type</th>
+                        <th>Amount</th>
+                        <th>Balance After</th>
+                        <th>Details</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredTransactions.map(t => (
+                        <tr key={t.id} className={t.amount_sats >= 0 ? 'tx-positive' : 'tx-negative'}>
+                          <td className="date-cell">
+                            {new Date(t.created_at).toLocaleString()}
+                          </td>
+                          <td>
+                            <span className={`tx-type tx-${t.type}`}>
+                              {t.type === 'deposit' && '⬇️ Deposit'}
+                              {t.type === 'withdrawal' && '⬆️ Withdrawal'}
+                              {t.type === 'order_placed' && '📝 Order'}
+                              {t.type === 'order_cancelled' && '↩️ Refund'}
+                              {t.type === 'bet_won' && '🏆 Won'}
+                            </span>
+                          </td>
+                          <td className={t.amount_sats >= 0 ? 'amount-positive' : 'amount-negative'}>
+                            {t.amount_sats >= 0 ? '+' : ''}{formatSats(t.amount_sats)} sats
+                          </td>
+                          <td>{formatSats(t.balance_after)} sats</td>
+                          <td className="details-cell">
+                            {t.market_title || t.lightning_invoice?.slice(0, 20) + '...' || '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <button className="btn btn-outline modal-close" onClick={onClose}>Close</button>
+      </div>
+    </div>
+  );
+}
+
 function AdminPanel({ user, onClose }) {
   const [markets, setMarkets] = useState([]);
   const [selectedMarket, setSelectedMarket] = useState(null);
@@ -721,10 +1544,14 @@ function AdminPanel({ user, onClose }) {
 
 // ==================== MAIN APP ====================
 function App() {
-  const { user, loading, login, logout, refreshBalance } = useAuth();
+  const { user, loading, login, register, googleLogin, lightningLogin, logout, refreshBalance } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
+  const [showLightningLogin, setShowLightningLogin] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
+  const [showPortfolio, setShowPortfolio] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showBotAdmin, setShowBotAdmin] = useState(false);
+  const [showWhatsThePoint, setShowWhatsThePoint] = useState(false);
   const [eventMarket, setEventMarket] = useState(null);
   const [grandmasters, setGrandmasters] = useState([]);
   const [selectedMarket, setSelectedMarket] = useState(null);
@@ -783,11 +1610,16 @@ function App() {
         user={user} 
         onLogout={logout}
         onShowWallet={() => setShowWallet(true)}
+        onShowPortfolio={() => setShowPortfolio(true)}
         onShowAdmin={() => setShowAdmin(true)}
+        onShowBotAdmin={() => setShowBotAdmin(true)}
+        onShowLogin={() => setShowLogin(true)}
       />
 
       <main className="main">
-        {selectedMarket ? (
+        {showWhatsThePoint ? (
+          <WhatsThePoint onClose={() => setShowWhatsThePoint(false)} />
+        ) : selectedMarket ? (
           <MarketDetail
             market={selectedMarket}
             user={user}
@@ -797,6 +1629,16 @@ function App() {
           />
         ) : (
           <>
+            <div className="intro-banner">
+              <button 
+                className="btn btn-whats-the-point"
+                onClick={() => setShowWhatsThePoint(true)}
+              >
+                🎯 What's the Point?
+              </button>
+              <span className="intro-text">New to prediction markets? Learn how this works!</span>
+            </div>
+
             <EventMarket
               market={eventMarket}
               user={user}
@@ -804,11 +1646,14 @@ function App() {
               onRefresh={handleRefresh}
             />
             
-            <GMBrowser
+            <ParticipantBrowser
               grandmasters={grandmasters}
               onSelectGM={handleSelectGM}
-              marketType={marketType}
-              setMarketType={setMarketType}
+            />
+            
+            <WinnerBrowser
+              grandmasters={grandmasters}
+              onSelectGM={handleSelectGM}
             />
           </>
         )}
@@ -821,15 +1666,39 @@ function App() {
       )}
 
       {showLogin && (
-        <LoginModal onLogin={login} onClose={() => setShowLogin(false)} />
+        <LoginModal 
+          onLogin={login}
+          onRegister={register}
+          onGoogleLogin={googleLogin}
+          onClose={() => setShowLogin(false)}
+          onSwitchToLightning={() => {
+            setShowLogin(false);
+            setShowLightningLogin(true);
+          }}
+        />
+      )}
+
+      {showLightningLogin && (
+        <LightningLoginModal 
+          onComplete={lightningLogin}
+          onClose={() => setShowLightningLogin(false)}
+        />
       )}
 
       {showWallet && user && (
         <WalletModal user={user} onClose={() => setShowWallet(false)} onRefresh={refreshBalance} />
       )}
 
+      {showPortfolio && user && (
+        <PortfolioModal user={user} onClose={() => setShowPortfolio(false)} onRefresh={refreshBalance} />
+      )}
+
       {showAdmin && user?.is_admin === 1 && (
         <AdminPanel user={user} onClose={() => setShowAdmin(false)} />
+      )}
+
+      {showBotAdmin && user?.is_admin === 1 && (
+        <BotAdmin onClose={() => setShowBotAdmin(false)} />
       )}
     </div>
   );

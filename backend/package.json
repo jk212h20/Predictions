@@ -14,12 +14,15 @@
   "description": "",
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "bech32": "^2.0.0",
     "better-sqlite3": "^12.6.2",
     "cors": "^2.8.6",
+    "crypto": "^1.0.1",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "google-auth-library": "^10.5.0",
     "jsonwebtoken": "^9.0.3",
+    "secp256k1": "^5.0.1",
     "uuid": "^9.0.1"
   }
 }

@@ -8,6 +8,7 @@ const bcrypt = require('bcryptjs');
 const { OAuth2Client } = require('google-auth-library');
 const db = require('./database');
 const lightning = require('./lightning');
+const bot = require('./bot');
 const { seed } = require('./seed');
 
 const app = express();
@@ -228,11 +229,213 @@ app.get('/api/auth/google-client-id', (req, res) => {
   res.json({ clientId });
 });
 
-// LNURL-auth challenge
+// ==================== LNURL-AUTH ROUTES ====================
+
+// Generate LNURL-auth challenge (returns QR code data)
 app.get('/api/auth/lnurl', (req, res) => {
-  const challenge = lightning.generateAuthChallenge();
-  // Store challenge for verification (in production, use Redis/DB)
+  const baseUrl = process.env.API_URL || `http://localhost:${PORT}`;
+  const challenge = lightning.generateAuthChallenge(db, baseUrl);
   res.json(challenge);
+});
+
+// LNURL-auth callback (called by Lightning wallet)
+// MUST return JSON per LNURL spec: { status: 'OK' } or { status: 'ERROR', reason: '...' }
+app.get('/api/auth/lnurl/callback', (req, res) => {
+  const { k1, sig, key } = req.query;
+  
+  if (!k1 || !sig || !key) {
+    return res.json({ status: 'ERROR', reason: 'Missing required parameters (k1, sig, key)' });
+  }
+  
+  const result = lightning.processAuthCallback(db, k1, sig, key);
+  
+  if (!result.ok) {
+    return res.json({ status: 'ERROR', reason: result.error });
+  }
+  
+  // Success - wallet will show success message to user
+  res.json({ status: 'OK' });
+});
+
+// Check LNURL-auth status (frontend polls this)
+app.get('/api/auth/lnurl/status/:k1', (req, res) => {
+  const { k1 } = req.params;
+  const status = lightning.getAuthStatus(db, k1);
+  res.json(status);
+});
+
+// Complete LNURL-auth login (called by frontend after verification)
+app.post('/api/auth/lnurl/complete', (req, res) => {
+  const { k1 } = req.body;
+  
+  if (!k1) {
+    return res.status(400).json({ error: 'Missing k1 parameter' });
+  }
+  
+  // Get challenge status
+  const status = lightning.getAuthStatus(db, k1);
+  
+  if (status.status !== 'verified') {
+    return res.status(400).json({ error: `Challenge is ${status.status}, not verified` });
+  }
+  
+  const pubkey = status.lightning_pubkey;
+  
+  // Find or create user by lightning pubkey
+  let user = db.prepare('SELECT * FROM users WHERE lightning_pubkey = ?').get(pubkey);
+  
+  if (!user) {
+    // Create new user with Lightning auth
+    const id = uuidv4();
+    const username = lightning.generateFriendlyUsername();
+    const accountNumber = lightning.getNextAccountNumber(db);
+    
+    db.prepare(`
+      INSERT INTO users (id, lightning_pubkey, username, account_number, balance_sats)
+      VALUES (?, ?, ?, ?, 100000)
+    `).run(id, pubkey, username, accountNumber);
+    
+    user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    console.log(`New Lightning user created: ${username} (account #${accountNumber})`);
+  }
+  
+  // Mark challenge as used
+  lightning.markChallengeUsed(db, k1);
+  
+  // Generate JWT
+  const token = jwt.sign(
+    { id: user.id, email: user.email, is_admin: user.is_admin },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+  
+  // Don't send password_hash to client
+  const { password_hash: _, ...safeUser } = user;
+  res.json({ token, user: safeUser });
+});
+
+// Link Lightning to existing account (requires auth)
+app.post('/api/auth/link-lightning', authMiddleware, (req, res) => {
+  const { k1 } = req.body;
+  
+  if (!k1) {
+    return res.status(400).json({ error: 'Missing k1 parameter' });
+  }
+  
+  // Get challenge status
+  const status = lightning.getAuthStatus(db, k1);
+  
+  if (status.status !== 'verified') {
+    return res.status(400).json({ error: `Challenge is ${status.status}, not verified` });
+  }
+  
+  const pubkey = status.lightning_pubkey;
+  
+  // Check if this pubkey is already linked to another account
+  const existingUser = db.prepare('SELECT * FROM users WHERE lightning_pubkey = ?').get(pubkey);
+  
+  if (existingUser && existingUser.id !== req.user.id) {
+    return res.status(400).json({ 
+      error: 'This Lightning wallet is already linked to another account',
+      existing_user: existingUser.username
+    });
+  }
+  
+  // Link to current user
+  db.prepare('UPDATE users SET lightning_pubkey = ? WHERE id = ?').run(pubkey, req.user.id);
+  lightning.markChallengeUsed(db, k1);
+  
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const { password_hash: _, ...safeUser } = user;
+  
+  res.json({ success: true, user: safeUser });
+});
+
+// Merge accounts: Link Lightning pubkey and merge data from Lightning-only account
+app.post('/api/auth/merge-accounts', authMiddleware, async (req, res) => {
+  const { k1, confirm } = req.body;
+  
+  if (!k1) {
+    return res.status(400).json({ error: 'Missing k1 parameter' });
+  }
+  
+  // Get challenge status
+  const status = lightning.getAuthStatus(db, k1);
+  
+  if (status.status !== 'verified') {
+    return res.status(400).json({ error: `Challenge is ${status.status}, not verified` });
+  }
+  
+  const pubkey = status.lightning_pubkey;
+  
+  // Check if this pubkey is linked to another account
+  const lightningUser = db.prepare('SELECT * FROM users WHERE lightning_pubkey = ?').get(pubkey);
+  
+  if (!lightningUser) {
+    // No existing account - just link it
+    db.prepare('UPDATE users SET lightning_pubkey = ? WHERE id = ?').run(pubkey, req.user.id);
+    lightning.markChallengeUsed(db, k1);
+    
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const { password_hash: _, ...safeUser } = user;
+    return res.json({ merged: false, user: safeUser });
+  }
+  
+  if (lightningUser.id === req.user.id) {
+    return res.json({ merged: false, message: 'Already linked to your account' });
+  }
+  
+  // Different account exists - need to merge
+  if (!confirm) {
+    // Return info about what would be merged
+    return res.json({
+      needs_confirmation: true,
+      lightning_account: {
+        username: lightningUser.username,
+        balance_sats: lightningUser.balance_sats,
+        has_email: !!lightningUser.email
+      },
+      message: 'This Lightning wallet is linked to another account. Confirm to merge accounts.'
+    });
+  }
+  
+  // User confirmed - perform merge
+  const currentUser = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  
+  // Transfer balance from Lightning account to current account
+  const newBalance = currentUser.balance_sats + lightningUser.balance_sats;
+  db.prepare('UPDATE users SET balance_sats = ?, lightning_pubkey = ? WHERE id = ?')
+    .run(newBalance, pubkey, req.user.id);
+  
+  // Update all orders from Lightning account to current account
+  db.prepare('UPDATE orders SET user_id = ? WHERE user_id = ?')
+    .run(req.user.id, lightningUser.id);
+  
+  // Update all bets (both yes and no sides)
+  db.prepare('UPDATE bets SET yes_user_id = ? WHERE yes_user_id = ?')
+    .run(req.user.id, lightningUser.id);
+  db.prepare('UPDATE bets SET no_user_id = ? WHERE no_user_id = ?')
+    .run(req.user.id, lightningUser.id);
+  db.prepare('UPDATE bets SET winner_user_id = ? WHERE winner_user_id = ?')
+    .run(req.user.id, lightningUser.id);
+  
+  // Update transactions
+  db.prepare('UPDATE transactions SET user_id = ? WHERE user_id = ?')
+    .run(req.user.id, lightningUser.id);
+  
+  // Delete the old Lightning-only account
+  db.prepare('DELETE FROM users WHERE id = ?').run(lightningUser.id);
+  
+  lightning.markChallengeUsed(db, k1);
+  
+  const mergedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const { password_hash: _, ...safeUser } = mergedUser;
+  
+  res.json({ 
+    merged: true, 
+    user: safeUser,
+    balance_added: lightningUser.balance_sats
+  });
 });
 
 // ==================== USER ROUTES ====================
@@ -261,13 +464,92 @@ app.get('/api/user/positions', authMiddleware, (req, res) => {
 
 app.get('/api/user/orders', authMiddleware, (req, res) => {
   const orders = db.prepare(`
-    SELECT o.*, m.title, m.type
+    SELECT o.*, m.title, m.type, g.name as grandmaster_name
     FROM orders o
     JOIN markets m ON o.market_id = m.id
+    LEFT JOIN grandmasters g ON m.grandmaster_id = g.id
     WHERE o.user_id = ? AND o.status IN ('open', 'partial')
     ORDER BY o.created_at DESC
   `).all(req.user.id);
   res.json(orders);
+});
+
+// Get all transactions for user (full audit trail)
+app.get('/api/user/transactions', authMiddleware, (req, res) => {
+  const { limit = 50, offset = 0, type } = req.query;
+  
+  let query = `
+    SELECT t.*, 
+           CASE 
+             WHEN t.reference_id IS NOT NULL AND t.type IN ('order_placed', 'order_cancelled') THEN o.market_id
+             WHEN t.reference_id IS NOT NULL AND t.type = 'bet_won' THEN b.market_id
+             ELSE NULL
+           END as market_id,
+           CASE 
+             WHEN t.reference_id IS NOT NULL AND t.type IN ('order_placed', 'order_cancelled') THEN m1.title
+             WHEN t.reference_id IS NOT NULL AND t.type = 'bet_won' THEN m2.title
+             ELSE NULL
+           END as market_title
+    FROM transactions t
+    LEFT JOIN orders o ON t.reference_id = o.id AND t.type IN ('order_placed', 'order_cancelled')
+    LEFT JOIN markets m1 ON o.market_id = m1.id
+    LEFT JOIN bets b ON t.reference_id = b.id AND t.type = 'bet_won'
+    LEFT JOIN markets m2 ON b.market_id = m2.id
+    WHERE t.user_id = ?
+  `;
+  
+  const params = [req.user.id];
+  
+  if (type && ['deposit', 'withdrawal', 'order_placed', 'order_cancelled', 'bet_won', 'bet_lost'].includes(type)) {
+    query += ' AND t.type = ?';
+    params.push(type);
+  }
+  
+  query += ' ORDER BY t.created_at DESC LIMIT ? OFFSET ?';
+  params.push(parseInt(limit), parseInt(offset));
+  
+  const transactions = db.prepare(query).all(...params);
+  
+  // Get total count for pagination
+  let countQuery = 'SELECT COUNT(*) as total FROM transactions WHERE user_id = ?';
+  const countParams = [req.user.id];
+  if (type) {
+    countQuery += ' AND type = ?';
+    countParams.push(type);
+  }
+  const { total } = db.prepare(countQuery).get(...countParams);
+  
+  res.json({ transactions, total, limit: parseInt(limit), offset: parseInt(offset) });
+});
+
+// Get trade history (completed bets with full details)
+app.get('/api/user/trades', authMiddleware, (req, res) => {
+  const { limit = 50, offset = 0 } = req.query;
+  
+  const trades = db.prepare(`
+    SELECT b.*, 
+           m.title as market_title, 
+           m.type as market_type,
+           m.status as market_status,
+           m.resolution as market_resolution,
+           g.name as grandmaster_name,
+           CASE WHEN b.yes_user_id = ? THEN 'yes' ELSE 'no' END as user_side,
+           CASE WHEN b.winner_user_id = ? THEN 'won' 
+                WHEN b.winner_user_id IS NOT NULL THEN 'lost'
+                ELSE 'pending' END as result
+    FROM bets b
+    JOIN markets m ON b.market_id = m.id
+    LEFT JOIN grandmasters g ON m.grandmaster_id = g.id
+    WHERE b.yes_user_id = ? OR b.no_user_id = ?
+    ORDER BY b.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(req.user.id, req.user.id, req.user.id, req.user.id, parseInt(limit), parseInt(offset));
+  
+  const { total } = db.prepare(`
+    SELECT COUNT(*) as total FROM bets WHERE yes_user_id = ? OR no_user_id = ?
+  `).get(req.user.id, req.user.id);
+  
+  res.json({ trades, total, limit: parseInt(limit), offset: parseInt(offset) });
 });
 
 // ==================== LIGHTNING/WALLET ROUTES ====================
@@ -490,12 +772,21 @@ app.post('/api/orders', authMiddleware, (req, res) => {
     ORDER BY ${side === 'yes' ? 'price_cents ASC' : 'price_cents DESC'}, created_at ASC
   `).all(market_id, oppositeSide, matchPrice);
   
+  // Track if we matched with any bot orders (for atomic pullback)
+  let matchedBotOrders = false;
+  
   for (const matchOrder of matchingOrders) {
     if (remainingAmount <= 0) break;
     
     const matchAvailable = matchOrder.amount_sats - matchOrder.filled_sats;
     const matchAmount = Math.min(remainingAmount, matchAvailable);
     const tradePrice = matchOrder.price_cents; // Price from the resting order
+    
+    // Check if this is a bot order
+    const isBotMatch = bot.isBotUser(matchOrder.user_id);
+    if (isBotMatch) {
+      matchedBotOrders = true;
+    }
     
     // Create bet
     const betId = uuidv4();
@@ -516,7 +807,13 @@ app.post('/api/orders', authMiddleware, (req, res) => {
       .run(newFilled, newStatus, matchOrder.id);
     
     remainingAmount -= matchAmount;
-    matchedBets.push({ betId, amount: matchAmount, price: 100 - tradePrice });
+    matchedBets.push({ betId, amount: matchAmount, price: 100 - tradePrice, isBotOrder: isBotMatch });
+  }
+  
+  // ATOMIC BOT PULLBACK - If we matched with bot orders, trigger pullback BEFORE returning
+  let pullbackResult = null;
+  if (matchedBotOrders) {
+    pullbackResult = bot.atomicPullback(amount_sats - remainingAmount, market_id);
   }
   
   // Create order for remaining amount
@@ -749,6 +1046,447 @@ app.post('/api/admin/grandmasters', authMiddleware, adminMiddleware, (req, res) 
     attendance_market_id: attendId,
     winner_market_id: winnerId
   });
+});
+
+// ==================== BOT ADMIN ROUTES ====================
+
+// Get bot statistics and status
+app.get('/api/admin/bot/stats', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const stats = bot.getStats();
+    const worstCase = bot.calculateWorstCase();
+    res.json({ ...stats, worstCase });
+  } catch (err) {
+    console.error('Bot stats error:', err);
+    res.status(500).json({ error: 'Failed to get bot stats', message: err.message });
+  }
+});
+
+// Get bot configuration
+app.get('/api/admin/bot/config', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const config = bot.getConfig();
+    res.json(config);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get bot config', message: err.message });
+  }
+});
+
+// Update bot configuration
+app.put('/api/admin/bot/config', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const { max_acceptable_loss, total_liquidity, threshold_percent, global_multiplier, is_active } = req.body;
+    const config = bot.updateConfig({
+      max_acceptable_loss,
+      total_liquidity,
+      threshold_percent,
+      global_multiplier,
+      is_active
+    });
+    res.json({ success: true, config });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update bot config', message: err.message });
+  }
+});
+
+// Get buy curve
+app.get('/api/admin/bot/curves/buy', authMiddleware, adminMiddleware, (req, res) => {
+  const { market_type = 'attendance' } = req.query;
+  try {
+    const curve = bot.getBuyCurve(market_type);
+    res.json(curve);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get buy curve', message: err.message });
+  }
+});
+
+// Get sell curve
+app.get('/api/admin/bot/curves/sell', authMiddleware, adminMiddleware, (req, res) => {
+  const { market_type = 'attendance' } = req.query;
+  try {
+    const curve = bot.getSellCurve(market_type);
+    res.json(curve);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get sell curve', message: err.message });
+  }
+});
+
+// Save buy curve
+app.put('/api/admin/bot/curves/buy', authMiddleware, adminMiddleware, (req, res) => {
+  const { market_type = 'attendance', price_points } = req.body;
+  if (!Array.isArray(price_points)) {
+    return res.status(400).json({ error: 'price_points must be an array' });
+  }
+  try {
+    const id = bot.saveCurve(market_type, 'buy', price_points);
+    res.json({ success: true, id });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save buy curve', message: err.message });
+  }
+});
+
+// Save sell curve
+app.put('/api/admin/bot/curves/sell', authMiddleware, adminMiddleware, (req, res) => {
+  const { market_type = 'attendance', price_points } = req.body;
+  if (!Array.isArray(price_points)) {
+    return res.status(400).json({ error: 'price_points must be an array' });
+  }
+  try {
+    const id = bot.saveCurve(market_type, 'sell', price_points);
+    res.json({ success: true, id });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save sell curve', message: err.message });
+  }
+});
+
+// Get market override
+app.get('/api/admin/bot/markets/:marketId/override', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const override = bot.getMarketOverride(req.params.marketId);
+    res.json(override || { override_type: null });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get market override', message: err.message });
+  }
+});
+
+// Set market override
+app.put('/api/admin/bot/markets/:marketId/override', authMiddleware, adminMiddleware, (req, res) => {
+  const { override_type, multiplier, custom_curve } = req.body;
+  try {
+    const id = bot.setMarketOverride(req.params.marketId, override_type, { multiplier, customCurve: custom_curve });
+    res.json({ success: true, id });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to set market override', message: err.message });
+  }
+});
+
+// Get effective curve for a specific market
+app.get('/api/admin/bot/markets/:marketId/effective-curve', authMiddleware, adminMiddleware, (req, res) => {
+  const { curve_type = 'buy' } = req.query;
+  try {
+    const curve = bot.getEffectiveCurve(req.params.marketId, curve_type);
+    res.json({ market_id: req.params.marketId, curve_type, curve });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get effective curve', message: err.message });
+  }
+});
+
+// Get all bot orders
+app.get('/api/admin/bot/orders', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const orders = bot.getBotOrders();
+    res.json(orders);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get bot orders', message: err.message });
+  }
+});
+
+// Get bot holdings (NO shares acquired)
+app.get('/api/admin/bot/holdings', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const holdings = bot.getBotHoldings();
+    res.json(holdings);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get bot holdings', message: err.message });
+  }
+});
+
+// Deploy orders for a single market (uses logged-in user's account)
+app.post('/api/admin/bot/deploy/:marketId', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const result = bot.deployMarketOrders(req.params.marketId, req.user.id);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to deploy market orders', message: err.message });
+  }
+});
+
+// Deploy orders for all attendance markets (uses logged-in user's account)
+app.post('/api/admin/bot/deploy-all', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const result = bot.deployAllOrders(req.user.id);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to deploy all orders', message: err.message });
+  }
+});
+
+// Withdraw all bot orders (uses logged-in user's account)
+app.post('/api/admin/bot/withdraw-all', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const result = bot.withdrawAllOrders(req.user.id);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to withdraw all orders', message: err.message });
+  }
+});
+
+// Cancel all orders for logged-in user (general portfolio function)
+app.post('/api/orders/cancel-all', authMiddleware, (req, res) => {
+  try {
+    const result = bot.cancelAllUserOrders(req.user.id);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to cancel all orders', message: err.message });
+  }
+});
+
+// Get bot activity log
+app.get('/api/admin/bot/log', authMiddleware, adminMiddleware, (req, res) => {
+  const { limit = 50 } = req.query;
+  try {
+    const log = bot.getActivityLog(parseInt(limit));
+    res.json(log);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get bot log', message: err.message });
+  }
+});
+
+// Get worst case analysis
+app.get('/api/admin/bot/worst-case', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const worstCase = bot.calculateWorstCase();
+    res.json(worstCase);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to calculate worst case', message: err.message });
+  }
+});
+
+// Batch set market overrides
+app.post('/api/admin/bot/batch-override', authMiddleware, adminMiddleware, (req, res) => {
+  const { market_ids, override_type, multiplier } = req.body;
+  if (!Array.isArray(market_ids)) {
+    return res.status(400).json({ error: 'market_ids must be an array' });
+  }
+  
+  try {
+    let updated = 0;
+    for (const marketId of market_ids) {
+      bot.setMarketOverride(marketId, override_type, { multiplier });
+      updated++;
+    }
+    res.json({ success: true, updated });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to batch override', message: err.message });
+  }
+});
+
+// Get all markets with bot status
+app.get('/api/admin/bot/markets', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const markets = db.prepare(`
+      SELECT m.id, m.title, m.type, m.status, g.name as grandmaster_name, g.fide_rating,
+             bmo.override_type, bmo.multiplier
+      FROM markets m
+      LEFT JOIN grandmasters g ON m.grandmaster_id = g.id
+      LEFT JOIN bot_market_overrides bmo ON bmo.market_id = m.id AND bmo.config_id = 'default'
+      WHERE m.type = 'attendance' AND m.status = 'open'
+      ORDER BY g.fide_rating DESC
+    `).all();
+    
+    // Add effective curve info for each market
+    const marketsWithCurves = markets.map(m => {
+      const effectiveCurve = bot.getEffectiveCurve(m.id, 'buy');
+      const totalOffered = effectiveCurve ? effectiveCurve.reduce((sum, p) => sum + p.amount, 0) : 0;
+      return {
+        ...m,
+        bot_enabled: effectiveCurve !== null,
+        total_offered: totalOffered,
+        price_points: effectiveCurve ? effectiveCurve.length : 0
+      };
+    });
+    
+    res.json(marketsWithCurves);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get bot markets', message: err.message });
+  }
+});
+
+// ==================== CURVE SHAPE LIBRARY ROUTES ====================
+
+// Generate a shape preview (without saving)
+app.post('/api/admin/bot/shapes/preview', authMiddleware, adminMiddleware, (req, res) => {
+  const { shape_type, params } = req.body;
+  try {
+    const shape = bot.generateShape(shape_type, params || {});
+    res.json({ shape_type, params, normalized_points: shape });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to generate shape', message: err.message });
+  }
+});
+
+// Get all saved shapes
+app.get('/api/admin/bot/shapes', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const shapes = bot.getShapes();
+    res.json(shapes);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get shapes', message: err.message });
+  }
+});
+
+// Get default shape
+app.get('/api/admin/bot/shapes/default', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const shape = bot.getDefaultShape();
+    res.json(shape);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get default shape', message: err.message });
+  }
+});
+
+// Save a new shape
+app.post('/api/admin/bot/shapes', authMiddleware, adminMiddleware, (req, res) => {
+  const { name, shape_type, params, normalized_points } = req.body;
+  if (!name || !shape_type) {
+    return res.status(400).json({ error: 'name and shape_type are required' });
+  }
+  try {
+    const shape = bot.saveShape(name, shape_type, params || {}, normalized_points);
+    res.json({ success: true, shape });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save shape', message: err.message });
+  }
+});
+
+// Get a specific shape
+app.get('/api/admin/bot/shapes/:id', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const shape = bot.getShape(req.params.id);
+    if (!shape) {
+      return res.status(404).json({ error: 'Shape not found' });
+    }
+    res.json(shape);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get shape', message: err.message });
+  }
+});
+
+// Update a shape's parameters
+app.put('/api/admin/bot/shapes/:id', authMiddleware, adminMiddleware, (req, res) => {
+  const { params, normalized_points } = req.body;
+  try {
+    const shape = bot.updateShape(req.params.id, { ...params, normalized_points });
+    res.json({ success: true, shape });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update shape', message: err.message });
+  }
+});
+
+// Set a shape as default
+app.post('/api/admin/bot/shapes/:id/set-default', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    bot.setDefaultShape(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to set default shape', message: err.message });
+  }
+});
+
+// Delete a shape
+app.delete('/api/admin/bot/shapes/:id', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    bot.deleteShape(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ==================== MARKET WEIGHTS ROUTES ====================
+
+// Initialize weights for all attendance markets
+app.post('/api/admin/bot/weights/initialize', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    bot.initializeMarketWeights();
+    const weights = bot.getMarketWeights();
+    res.json({ success: true, weights });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to initialize weights', message: err.message });
+  }
+});
+
+// Get all market weights
+app.get('/api/admin/bot/weights', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const weights = bot.getMarketWeights();
+    res.json(weights);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get weights', message: err.message });
+  }
+});
+
+// Set weight for a specific market (auto-rebalances others)
+app.put('/api/admin/bot/weights/:marketId', authMiddleware, adminMiddleware, (req, res) => {
+  const { weight, lock } = req.body;
+  if (weight === undefined || weight < 0 || weight > 1) {
+    return res.status(400).json({ error: 'weight must be between 0 and 1' });
+  }
+  try {
+    bot.setMarketWeight(req.params.marketId, weight, lock || false);
+    const weights = bot.getMarketWeights();
+    res.json({ success: true, weights });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to set weight', message: err.message });
+  }
+});
+
+// Lock/unlock a market weight
+app.put('/api/admin/bot/weights/:marketId/lock', authMiddleware, adminMiddleware, (req, res) => {
+  const { locked } = req.body;
+  try {
+    bot.setWeightLock(req.params.marketId, !!locked);
+    const weights = bot.getMarketWeights();
+    res.json({ success: true, weights });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to set lock', message: err.message });
+  }
+});
+
+// Set relative odds for a market
+app.put('/api/admin/bot/weights/:marketId/odds', authMiddleware, adminMiddleware, (req, res) => {
+  const { relative_odds } = req.body;
+  if (relative_odds === undefined || relative_odds < 0) {
+    return res.status(400).json({ error: 'relative_odds must be >= 0' });
+  }
+  try {
+    bot.setRelativeOdds(req.params.marketId, relative_odds);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to set relative odds', message: err.message });
+  }
+});
+
+// Apply relative odds to recalculate weights
+app.post('/api/admin/bot/weights/apply-odds', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    bot.applyRelativeOdds();
+    const weights = bot.getMarketWeights();
+    res.json({ success: true, weights });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to apply relative odds', message: err.message });
+  }
+});
+
+// Batch set relative odds (for importing a vector)
+app.post('/api/admin/bot/weights/batch-odds', authMiddleware, adminMiddleware, (req, res) => {
+  const { odds } = req.body;
+  // odds should be array of { market_id, relative_odds }
+  if (!Array.isArray(odds)) {
+    return res.status(400).json({ error: 'odds must be an array of { market_id, relative_odds }' });
+  }
+  try {
+    for (const item of odds) {
+      if (item.market_id && item.relative_odds !== undefined) {
+        bot.setRelativeOdds(item.market_id, item.relative_odds);
+      }
+    }
+    bot.applyRelativeOdds();
+    const weights = bot.getMarketWeights();
+    res.json({ success: true, weights });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to batch set odds', message: err.message });
+  }
 });
 
 // ==================== HEALTH CHECK ====================

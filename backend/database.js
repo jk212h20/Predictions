@@ -15,6 +15,7 @@ db.exec(`
     google_id TEXT UNIQUE,
     lightning_pubkey TEXT UNIQUE,
     username TEXT,
+    avatar_url TEXT,
     balance_sats INTEGER DEFAULT 0,
     is_admin INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now')),
@@ -122,6 +123,153 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_bets_user_no ON bets(no_user_id);
   CREATE INDEX IF NOT EXISTS idx_markets_gm ON markets(grandmaster_id);
   CREATE INDEX IF NOT EXISTS idx_markets_type ON markets(type, status);
+
+  -- ==================== BOT CONFIGURATION TABLES ====================
+
+  -- Bot global configuration
+  CREATE TABLE IF NOT EXISTS bot_config (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    bot_user_id TEXT NOT NULL,
+    max_acceptable_loss INTEGER NOT NULL DEFAULT 10000000,
+    total_liquidity INTEGER NOT NULL DEFAULT 100000000,
+    threshold_percent REAL NOT NULL DEFAULT 1.0,
+    global_multiplier REAL NOT NULL DEFAULT 1.0,
+    is_active INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (bot_user_id) REFERENCES users(id)
+  );
+
+  -- Bot buy curves (for placing NO offers at various YES prices)
+  -- This is the default curve for attendance markets
+  CREATE TABLE IF NOT EXISTS bot_curves (
+    id TEXT PRIMARY KEY,
+    config_id TEXT NOT NULL DEFAULT 'default',
+    market_type TEXT NOT NULL DEFAULT 'attendance' CHECK(market_type IN ('attendance', 'winner')),
+    curve_type TEXT NOT NULL DEFAULT 'buy' CHECK(curve_type IN ('buy', 'sell')),
+    price_points TEXT NOT NULL,
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (config_id) REFERENCES bot_config(id)
+  );
+
+  -- Per-market overrides for the bot
+  CREATE TABLE IF NOT EXISTS bot_market_overrides (
+    id TEXT PRIMARY KEY,
+    config_id TEXT NOT NULL DEFAULT 'default',
+    market_id TEXT NOT NULL,
+    override_type TEXT NOT NULL CHECK(override_type IN ('multiply', 'replace', 'disable')),
+    multiplier REAL DEFAULT 1.0,
+    custom_curve TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (config_id) REFERENCES bot_config(id),
+    FOREIGN KEY (market_id) REFERENCES markets(id),
+    UNIQUE(config_id, market_id)
+  );
+
+  -- Bot exposure tracking (updated atomically with order fills)
+  CREATE TABLE IF NOT EXISTS bot_exposure (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    total_at_risk INTEGER DEFAULT 0,
+    current_tier INTEGER DEFAULT 0,
+    last_pullback_at TEXT,
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  -- Bot activity log for audit
+  CREATE TABLE IF NOT EXISTS bot_log (
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL,
+    details TEXT,
+    exposure_before INTEGER,
+    exposure_after INTEGER,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  -- Index for bot log
+  CREATE INDEX IF NOT EXISTS idx_bot_log_action ON bot_log(action, created_at);
+
+  -- ==================== CURVE SHAPE LIBRARY ====================
+
+  -- Saved curve shapes (normalized distributions)
+  -- Shapes are stored as normalized values that sum to 1.0
+  CREATE TABLE IF NOT EXISTS bot_curve_shapes (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    shape_type TEXT NOT NULL CHECK(shape_type IN ('flat', 'bell', 'exponential', 'logarithmic', 'sigmoid', 'parabolic', 'custom')),
+    params TEXT NOT NULL DEFAULT '{}',
+    normalized_points TEXT NOT NULL,
+    is_default INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  -- Market weights for budget allocation (sum to 1.0 across all attendance markets)
+  CREATE TABLE IF NOT EXISTS bot_market_weights (
+    id TEXT PRIMARY KEY,
+    market_id TEXT NOT NULL UNIQUE,
+    weight REAL NOT NULL DEFAULT 0.02,
+    relative_odds REAL DEFAULT 1.0,
+    is_locked INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (market_id) REFERENCES markets(id)
+  );
+
+  -- Index for weights
+  CREATE INDEX IF NOT EXISTS idx_bot_weights_market ON bot_market_weights(market_id);
+`);
+
+// Migration: Add avatar_url column if it doesn't exist
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN avatar_url TEXT`);
+} catch (e) {
+  // Column already exists, ignore
+}
+
+// Migration: Add password_hash column for email authentication
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`);
+} catch (e) {
+  // Column already exists, ignore
+}
+
+// Migration: Add email_verified column
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0`);
+} catch (e) {
+  // Column already exists, ignore
+}
+
+// Migration: Add account_number column (permanent, sequential ID for referential integrity)
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN account_number INTEGER`);
+  // Backfill existing accounts with sequential numbers
+  const users = db.prepare('SELECT id FROM users ORDER BY created_at ASC').all();
+  users.forEach((user, index) => {
+    db.prepare('UPDATE users SET account_number = ? WHERE id = ?').run(index + 1, user.id);
+  });
+} catch (e) {
+  // Column already exists, ignore
+}
+
+// Create LNURL auth challenges table (for tracking login attempts)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS lnurl_auth_challenges (
+    k1 TEXT PRIMARY KEY,
+    created_at TEXT DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'verified', 'expired', 'used')),
+    lightning_pubkey TEXT,
+    signature TEXT,
+    verified_at TEXT
+  );
+
+  -- Index for cleanup of expired challenges
+  CREATE INDEX IF NOT EXISTS idx_lnurl_challenges_expires ON lnurl_auth_challenges(expires_at);
+  CREATE INDEX IF NOT EXISTS idx_lnurl_challenges_status ON lnurl_auth_challenges(status);
 `);
 
 module.exports = db;
