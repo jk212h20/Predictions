@@ -269,16 +269,28 @@ export default function BotAdmin({ onClose }) {
     }
   };
 
-  // Handle tier budget change
-  const handleTierBudgetChange = async (tier, newBudget) => {
+  // Handle tier budget change - preserves the adjusted tier's value
+  const handleTierBudgetChange = async (tier, newBudget, clearLocalState = false) => {
     setSaving(true);
     try {
       const result = await api.setTierBudget(tier, newBudget);
-      setTiers(result.tiers || []);
+      // Merge results: keep user's chosen value for the adjusted tier, update others
+      const updatedTiers = (result.tiers || []).map(t => {
+        if (t.tier === tier) {
+          return { ...t, budgetPercent: newBudget };
+        }
+        return t;
+      });
+      setTiers(updatedTiers);
     } catch (err) {
       alert('Failed to update tier budget: ' + err.message);
     }
     setSaving(false);
+    // Clear local drag state after API completes
+    if (clearLocalState) {
+      setDraggingTier(null);
+      setLocalTierValues({});
+    }
   };
 
   // Initialize weights from likelihood scores
@@ -1248,13 +1260,16 @@ export default function BotAdmin({ onClose }) {
                                   setLocalTierValues(prev => ({ ...prev, [tier.tier]: newValue }));
                                 }}
                                 onMouseUp={e => {
-                                  // Call API only on release
+                                  // Call API only on release - don't clear local state here!
+                                  // The API handler will clear it after response
                                   const newValue = localTierValues[tier.tier];
                                   if (newValue !== undefined) {
-                                    handleTierBudgetChange(tier.tier, newValue);
+                                    handleTierBudgetChange(tier.tier, newValue, true);
+                                  } else {
+                                    // No change was made, clear state
+                                    setDraggingTier(null);
+                                    setLocalTierValues({});
                                   }
-                                  setDraggingTier(null);
-                                  setLocalTierValues({});
                                 }}
                                 onMouseLeave={e => {
                                   // If mouse leaves while dragging, commit the change
