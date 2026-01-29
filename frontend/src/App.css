@@ -2528,17 +2528,70 @@ label {
 }
 
 .deploy-summary {
-  background: var(--bg-input);
-  border-radius: var(--radius-md);
-  padding: 1.25rem;
-  border: 1px solid var(--border);
+  background: var(--card-bg);
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
 }
 
-.summary-row {
+.deploy-summary h4 {
+  margin: 1rem 0 0.5rem 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.deploy-summary h4:first-child {
+  margin-top: 0;
+}
+
+.deploy-summary .summary-row {
   display: flex;
   justify-content: space-between;
   padding: 0.5rem 0;
-  font-size: 0.9375rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.formula-breakdown {
+  background: rgba(247, 147, 26, 0.1);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin: 0.5rem 0;
+}
+
+.formula-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.25rem 0;
+  font-family: monospace;
+  font-size: 0.9rem;
+}
+
+.formula-row span:last-child {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.exposure-info {
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid #ff6b6b;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin: 0.5rem 0;
+  display: flex;
+  justify-content: space-between;
+}
+
+.info-banner {
+  background: rgba(72, 219, 251, 0.1);
+  border: 1px solid #48dbfb;
+  color: #48dbfb;
+  padding: 0.75rem;
+  border-radius: 6px;
+  margin-top: 0.5rem;
 }
 
 .summary-row.highlight {

@@ -737,80 +737,200 @@ app.post('/api/wallet/simulate-payment', authMiddleware, (req, res) => {
   res.json(result);
 });
 
-app.post('/api/wallet/withdraw', authMiddleware, (req, res) => {
+// Constants for withdrawal rules
+const AUTO_WITHDRAW_LIMIT = 100000; // 100k sats auto-approve limit
+
+app.post('/api/wallet/withdraw', authMiddleware, async (req, res) => {
   const { payment_request, amount_sats } = req.body;
+  
+  if (!payment_request || !amount_sats || amount_sats < 1000) {
+    return res.status(400).json({ error: 'Invalid withdrawal request. Minimum 1000 sats.' });
+  }
   
   const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
   if (user.balance_sats < amount_sats) {
     return res.status(400).json({ error: 'Insufficient balance' });
   }
   
-  // Deduct balance first
-  const newBalance = user.balance_sats - amount_sats;
-  db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, req.user.id);
+  // Calculate user's total completed deposits
+  const depositResult = db.prepare(`
+    SELECT COALESCE(SUM(amount_sats), 0) as total_deposits
+    FROM transactions
+    WHERE user_id = ? AND type = 'deposit' AND status = 'completed'
+  `).get(req.user.id);
+  const totalDeposits = depositResult.total_deposits;
   
-  // Pay invoice
-  const payment = lightning.payInvoice(payment_request, amount_sats);
-  
-  // Record transaction
-  db.prepare(`
-    INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, lightning_invoice, status)
-    VALUES (?, ?, 'withdrawal', ?, ?, ?, 'completed')
-  `).run(uuidv4(), req.user.id, -amount_sats, newBalance, payment_request);
-  
-  // BOT SAFEGUARD: If user is admin with bot active, check if max_loss exceeds new balance
-  // and proportionally reduce offers if needed
-  let botAdjustment = null;
-  if (req.user.is_admin) {
-    try {
-      const config = bot.getConfig();
-      if (config && config.max_acceptable_loss > newBalance) {
-        // Max loss now exceeds balance - need to reduce it to match new balance
-        const oldMaxLoss = config.max_acceptable_loss;
-        const ratio = newBalance / oldMaxLoss;
-        
-        // Update config to new max loss
-        bot.updateConfig({ max_acceptable_loss: newBalance });
-        
-        // If there are active orders, cancel and redeploy with reduced amounts
-        const activeOrders = db.prepare(`
-          SELECT COUNT(*) as count FROM orders 
-          WHERE user_id = ? AND status IN ('open', 'partial')
-        `).get(req.user.id);
-        
-        if (activeOrders.count > 0) {
-          // Withdraw all orders and let the user redeploy manually
-          const withdrawResult = bot.withdrawAllOrders(req.user.id);
-          botAdjustment = {
-            reduced: true,
-            old_max_loss: oldMaxLoss,
-            new_max_loss: newBalance,
-            ratio: ratio,
-            orders_withdrawn: withdrawResult.ordersCancelled,
-            refunded: withdrawResult.refund,
-            message: 'Bot max_loss reduced to match new balance. Orders withdrawn - please redeploy.'
-          };
-        } else {
-          botAdjustment = {
-            reduced: true,
-            old_max_loss: oldMaxLoss,
-            new_max_loss: newBalance,
-            ratio: ratio,
-            message: 'Bot max_loss reduced to match new balance.'
-          };
-        }
-      }
-    } catch (err) {
-      console.error('Bot adjustment on withdrawal failed:', err);
-      // Continue with withdrawal even if bot adjustment fails
-    }
+  // Check channel liquidity
+  let channelBalance;
+  try {
+    channelBalance = await lightning.getChannelBalance();
+  } catch (err) {
+    console.error('Failed to get channel balance:', err);
+    channelBalance = { outbound_sats: 0, is_real: true };
   }
   
-  res.json({ 
-    success: true, 
-    balance_sats: newBalance,
-    bot_adjustment: botAdjustment
-  });
+  // Determine if auto-approve or pending
+  // Auto-approve if: amount <= 100k AND amount <= total deposits AND channel has liquidity
+  const canAutoApprove = 
+    amount_sats <= AUTO_WITHDRAW_LIMIT &&
+    amount_sats <= totalDeposits &&
+    channelBalance.outbound_sats >= amount_sats;
+  
+  // Build reason for pending if not auto-approved
+  let pendingReason = null;
+  if (!canAutoApprove) {
+    const reasons = [];
+    if (amount_sats > AUTO_WITHDRAW_LIMIT) {
+      reasons.push(`exceeds ${AUTO_WITHDRAW_LIMIT.toLocaleString()} sats limit`);
+    }
+    if (amount_sats > totalDeposits) {
+      reasons.push(`exceeds your total deposits (${totalDeposits.toLocaleString()} sats)`);
+    }
+    if (channelBalance.outbound_sats < amount_sats) {
+      reasons.push(`insufficient channel liquidity (${channelBalance.outbound_sats.toLocaleString()} sats available)`);
+    }
+    pendingReason = reasons.join(', ');
+  }
+  
+  if (canAutoApprove) {
+    // AUTO-APPROVE: Process immediately
+    try {
+      // Deduct balance first
+      const newBalance = user.balance_sats - amount_sats;
+      db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, req.user.id);
+      
+      // Pay invoice
+      const payment = await lightning.payInvoice(payment_request, amount_sats);
+      
+      if (payment.status === 'failed') {
+        // Refund on failure
+        db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(user.balance_sats, req.user.id);
+        return res.status(500).json({ error: 'Payment failed', details: payment.error });
+      }
+      
+      // Record transaction
+      db.prepare(`
+        INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, lightning_invoice, status)
+        VALUES (?, ?, 'withdrawal', ?, ?, ?, 'completed')
+      `).run(uuidv4(), req.user.id, -amount_sats, newBalance, payment_request);
+      
+      // BOT SAFEGUARD: If user is admin with bot active, check if max_loss exceeds new balance
+      let botAdjustment = null;
+      if (req.user.is_admin) {
+        try {
+          const config = bot.getConfig();
+          if (config && config.max_acceptable_loss > newBalance) {
+            const oldMaxLoss = config.max_acceptable_loss;
+            const ratio = newBalance / oldMaxLoss;
+            bot.updateConfig({ max_acceptable_loss: newBalance });
+            
+            const activeOrders = db.prepare(`
+              SELECT COUNT(*) as count FROM orders 
+              WHERE user_id = ? AND status IN ('open', 'partial')
+            `).get(req.user.id);
+            
+            if (activeOrders.count > 0) {
+              const withdrawResult = bot.withdrawAllOrders(req.user.id);
+              botAdjustment = {
+                reduced: true, old_max_loss: oldMaxLoss, new_max_loss: newBalance,
+                ratio, orders_withdrawn: withdrawResult.ordersCancelled, refunded: withdrawResult.refund,
+                message: 'Bot max_loss reduced to match new balance. Orders withdrawn - please redeploy.'
+              };
+            } else {
+              botAdjustment = { reduced: true, old_max_loss: oldMaxLoss, new_max_loss: newBalance, ratio,
+                message: 'Bot max_loss reduced to match new balance.' };
+            }
+          }
+        } catch (err) {
+          console.error('Bot adjustment on withdrawal failed:', err);
+        }
+      }
+      
+      return res.json({ 
+        success: true, 
+        status: 'completed',
+        balance_sats: newBalance,
+        bot_adjustment: botAdjustment
+      });
+    } catch (err) {
+      console.error('Auto-withdrawal failed:', err);
+      return res.status(500).json({ error: 'Withdrawal failed', details: err.message });
+    }
+  } else {
+    // PENDING: Create pending withdrawal for admin approval
+    const withdrawalId = uuidv4();
+    
+    // Deduct balance (hold it)
+    const newBalance = user.balance_sats - amount_sats;
+    db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, req.user.id);
+    
+    // Create pending withdrawal record
+    db.prepare(`
+      INSERT INTO pending_withdrawals (id, user_id, amount_sats, payment_request, status)
+      VALUES (?, ?, ?, ?, 'pending')
+    `).run(withdrawalId, req.user.id, amount_sats, payment_request);
+    
+    // Record pending transaction
+    db.prepare(`
+      INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, lightning_invoice, reference_id, status)
+      VALUES (?, ?, 'withdrawal', ?, ?, ?, ?, 'pending')
+    `).run(uuidv4(), req.user.id, -amount_sats, newBalance, payment_request, withdrawalId);
+    
+    return res.json({
+      success: true,
+      status: 'pending',
+      withdrawal_id: withdrawalId,
+      balance_sats: newBalance,
+      reason: pendingReason,
+      message: 'Withdrawal submitted for admin approval. Funds are held until processed.'
+    });
+  }
+});
+
+// Cancel a pending withdrawal (user can cancel their own pending withdrawal)
+app.post('/api/wallet/withdraw/cancel', authMiddleware, (req, res) => {
+  const { withdrawal_id } = req.body;
+  
+  const withdrawal = db.prepare(`
+    SELECT * FROM pending_withdrawals WHERE id = ? AND user_id = ? AND status = 'pending'
+  `).get(withdrawal_id, req.user.id);
+  
+  if (!withdrawal) {
+    return res.status(404).json({ error: 'Pending withdrawal not found' });
+  }
+  
+  // Refund balance
+  const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
+  const newBalance = user.balance_sats + withdrawal.amount_sats;
+  db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, req.user.id);
+  
+  // Update withdrawal status
+  db.prepare(`
+    UPDATE pending_withdrawals SET status = 'rejected', rejection_reason = 'Cancelled by user', processed_at = datetime('now')
+    WHERE id = ?
+  `).run(withdrawal_id);
+  
+  // Update transaction
+  db.prepare(`
+    UPDATE transactions SET status = 'failed' WHERE reference_id = ?
+  `).run(withdrawal_id);
+  
+  // Record refund transaction
+  db.prepare(`
+    INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, reference_id, status)
+    VALUES (?, ?, 'order_cancelled', ?, ?, ?, 'completed')
+  `).run(uuidv4(), req.user.id, withdrawal.amount_sats, newBalance, withdrawal_id);
+  
+  res.json({ success: true, balance_sats: newBalance });
+});
+
+// Get user's pending withdrawals
+app.get('/api/wallet/pending-withdrawals', authMiddleware, (req, res) => {
+  const pending = db.prepare(`
+    SELECT * FROM pending_withdrawals WHERE user_id = ? AND status = 'pending'
+    ORDER BY created_at DESC
+  `).all(req.user.id);
+  res.json(pending);
 });
 
 // ==================== MARKET ROUTES ====================
@@ -1774,6 +1894,144 @@ app.post('/api/admin/seed-players', authMiddleware, adminMiddleware, (req, res) 
     console.error('Seed players error:', err);
     res.status(500).json({ error: 'Failed to seed players', message: err.message });
   }
+});
+
+// ==================== ADMIN WITHDRAWAL MANAGEMENT ====================
+
+// Get all pending withdrawals (admin)
+app.get('/api/admin/withdrawals/pending', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const pending = db.prepare(`
+      SELECT pw.*, u.username, u.email,
+             (SELECT COALESCE(SUM(amount_sats), 0) FROM transactions 
+              WHERE user_id = pw.user_id AND type = 'deposit' AND status = 'completed') as user_total_deposits
+      FROM pending_withdrawals pw
+      JOIN users u ON pw.user_id = u.id
+      WHERE pw.status = 'pending'
+      ORDER BY pw.created_at ASC
+    `).all();
+    res.json(pending);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get pending withdrawals', message: err.message });
+  }
+});
+
+// Get channel balance info (admin)
+app.get('/api/admin/channel-balance', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const balance = await lightning.getChannelBalance();
+    res.json(balance);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get channel balance', message: err.message });
+  }
+});
+
+// Approve a pending withdrawal (admin)
+app.post('/api/admin/withdrawals/:id/approve', authMiddleware, adminMiddleware, async (req, res) => {
+  const withdrawalId = req.params.id;
+  
+  const withdrawal = db.prepare(`
+    SELECT * FROM pending_withdrawals WHERE id = ? AND status = 'pending'
+  `).get(withdrawalId);
+  
+  if (!withdrawal) {
+    return res.status(404).json({ error: 'Pending withdrawal not found' });
+  }
+  
+  // Check channel balance before approving
+  let channelBalance;
+  try {
+    channelBalance = await lightning.getChannelBalance();
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to check channel balance', message: err.message });
+  }
+  
+  if (channelBalance.outbound_sats < withdrawal.amount_sats) {
+    return res.status(400).json({ 
+      error: 'Insufficient channel liquidity',
+      required: withdrawal.amount_sats,
+      available: channelBalance.outbound_sats
+    });
+  }
+  
+  try {
+    // Pay the invoice
+    const payment = await lightning.payInvoice(withdrawal.payment_request, withdrawal.amount_sats);
+    
+    if (payment.status === 'failed') {
+      // Mark as failed
+      db.prepare(`
+        UPDATE pending_withdrawals SET status = 'failed', processed_at = datetime('now')
+        WHERE id = ?
+      `).run(withdrawalId);
+      
+      // Refund the user
+      const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(withdrawal.user_id);
+      const newBalance = user.balance_sats + withdrawal.amount_sats;
+      db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, withdrawal.user_id);
+      
+      db.prepare(`UPDATE transactions SET status = 'failed' WHERE reference_id = ?`).run(withdrawalId);
+      
+      return res.status(500).json({ error: 'Payment failed', details: payment.error });
+    }
+    
+    // Update withdrawal to completed
+    db.prepare(`
+      UPDATE pending_withdrawals 
+      SET status = 'completed', approved_by = ?, processed_at = datetime('now')
+      WHERE id = ?
+    `).run(req.user.id, withdrawalId);
+    
+    // Update transaction to completed
+    db.prepare(`UPDATE transactions SET status = 'completed' WHERE reference_id = ?`).run(withdrawalId);
+    
+    res.json({ 
+      success: true, 
+      message: 'Withdrawal approved and processed',
+      payment_hash: payment.id,
+      fee_sats: payment.fee_sats || 0
+    });
+  } catch (err) {
+    console.error('Failed to process withdrawal:', err);
+    res.status(500).json({ error: 'Failed to process withdrawal', message: err.message });
+  }
+});
+
+// Reject a pending withdrawal (admin)
+app.post('/api/admin/withdrawals/:id/reject', authMiddleware, adminMiddleware, (req, res) => {
+  const withdrawalId = req.params.id;
+  const { reason } = req.body;
+  
+  const withdrawal = db.prepare(`
+    SELECT * FROM pending_withdrawals WHERE id = ? AND status = 'pending'
+  `).get(withdrawalId);
+  
+  if (!withdrawal) {
+    return res.status(404).json({ error: 'Pending withdrawal not found' });
+  }
+  
+  // Refund the user
+  const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(withdrawal.user_id);
+  const newBalance = user.balance_sats + withdrawal.amount_sats;
+  db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, withdrawal.user_id);
+  
+  // Update withdrawal to rejected
+  db.prepare(`
+    UPDATE pending_withdrawals 
+    SET status = 'rejected', rejection_reason = ?, approved_by = ?, processed_at = datetime('now')
+    WHERE id = ?
+  `).run(reason || 'Rejected by admin', req.user.id, withdrawalId);
+  
+  // Update transaction to failed
+  db.prepare(`UPDATE transactions SET status = 'failed' WHERE reference_id = ?`).run(withdrawalId);
+  
+  // Record refund
+  db.prepare(`
+    INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, reference_id, status)
+    VALUES (?, ?, 'order_cancelled', ?, ?, ?, 'completed')
+  `).run(uuidv4(), withdrawal.user_id, withdrawal.amount_sats, newBalance, withdrawalId);
+  
+  res.json({ success: true, message: 'Withdrawal rejected and funds returned to user' });
 });
 
 // ==================== HEALTH CHECK ====================

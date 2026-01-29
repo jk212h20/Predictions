@@ -1,197 +1,54 @@
-# Progress - Bitcoin Chess 960 Predictions
+# Progress - Predictions Market Maker Bot
 
-## Current Status: Market Maker Bot Implemented ✓
+## Latest Update: 2026-01-28 - Budget Calculation Fix
 
-### What Works
-- **Core Platform**: Complete prediction market for Bitcoin Chess 960 Championship
-- **Authentication**: Email/password + Google OAuth login
-- **Markets**: Event market + 50+ grandmaster attendance/winner markets
-- **Order Book**: Full limit order matching engine
-- **Portfolio**: Positions, orders, trades, transactions tracking
-- **Admin Panel**: Market resolution with 24-hour delay safety
+### Fixed Issues
+1. **Deployment Preview/Actual Mismatch** - Fixed the core bug where deployment preview showed costs exceeding user balance
+2. **Budget Calculation Formula** - Now correctly uses: `deployable = min(balance, max_loss) × multiplier × pullback_ratio`
+3. **1% Threshold Pullback** - Changed from 10% tiers to 1% thresholds for smoother liquidity adjustment
+4. **Set Active Curve** - Added "Set as Active" button for saved curves in the UI
 
-### Market Maker Bot (NEW - Jan 27, 2026)
-Complete bot implementation with guaranteed max loss protection:
+### Key Formula
+```
+deployable_budget = min(user_balance, max_acceptable_loss) × global_multiplier × pullback_ratio
 
-**Backend (`backend/bot.js`)**:
-- **Curve-Based Liquidity**: Configurable buy/sell curves with price points
-- **Atomic Pullback**: Triggered within same transaction as order fill
-- **Tier-Based Risk**: Automatic reduction when exposure crosses thresholds
-- **Market Overrides**: Per-market multipliers, disable, or custom curves
-- **Activity Logging**: Full audit trail of bot actions
+where:
+  pullback_ratio = (max_loss - current_exposure) / max_loss
+  
+Example: 1M budget, 10x multiplier, 0% exposure
+  = 1,000,000 × 10 × 1.0 = 10,000,000 displayed liquidity
+  
+At 50% exposure (500K):
+  = 1,000,000 × 10 × 0.5 = 5,000,000 displayed liquidity
+```
 
-**Database Tables**:
-- `bot_config`: Max loss, threshold %, global multiplier, active status
-- `bot_curves`: Buy/sell curves stored as JSON price points
-- `bot_market_overrides`: Per-market customizations
-- `bot_exposure`: Current exposure, tier, last pullback time
-- `bot_log`: Activity audit trail
-
-**API Endpoints** (`/api/admin/bot/*`):
-- GET/PUT `/config` - Bot configuration
-- GET/PUT `/curves/buy|sell` - Curve management
-- GET `/markets` - All markets with bot status
-- PUT `/markets/:id/override` - Per-market settings
-- POST `/deploy-all` - Deploy orders to all markets
-- POST `/withdraw-all` - Cancel all bot orders
-- GET `/stats` - Real-time risk metrics
-- GET `/log` - Activity history
-
-**Frontend (`frontend/src/BotAdmin.jsx`)**:
-- Risk dashboard with exposure/tier/pullback metrics
-- Curve editor with visual chart
-- Market override management
-- Deploy/withdraw controls
-- Activity log viewer
-
-**Key Design Decisions**:
-1. **Atomic Pullback**: Guaranteed - runs in same transaction as order fill
-2. **Bot takes NO side**: Provides YES liquidity, limits exposure
-3. **Tiered reduction**: Exposure ÷ Max Loss = reduction percentage
-4. **Per-market control**: Disable, multiply, or replace curves per market
-
-### Deployment
-- **Hosted**: Railway (backend + frontend)
-- **Database**: SQLite with better-sqlite3
-- **Lightning**: Mock implementation (ready for LNbits integration)
+### What Works Now
+- [x] Lightning Network deposits (real LND integration)
+- [x] Lightning Network login (LNURL-auth)
+- [x] Market creation and order matching
+- [x] Market resolution with 3-minute delay
+- [x] Bot market maker with configurable curves
+- [x] Tier-based budget allocation
+- [x] Curve shape library (bell, flat, exponential, etc.)
+- [x] Deployment preview matches actual deployment
+- [x] Budget capped at user balance
+- [x] Multiplier for liquidity amplification
+- [x] 1% threshold-based pullback
+- [x] Active curve selection
 
 ### What's Left
-- [ ] Adversarial test suite for bot
-- [ ] Real Lightning Network integration (LNbits)
-- [ ] Email verification
-- [ ] Mobile responsiveness improvements
+- [ ] Real withdrawal functionality (LND pay invoice)
+- [ ] Mobile UI polish
+- [ ] Performance optimization for large order books
+- [ ] More sophisticated pullback strategies
 
-### LNURL-Auth Login (NEW - Jan 28, 2026)
-Complete "Login with Lightning" implementation:
+### Database Schema Notes
+- `bot_config` - stores max_acceptable_loss, global_multiplier, threshold_percent, bot_user_id
+- `bot_exposure` - tracks current exposure and tier (now 1-100 instead of 1-10)
+- `bot_curve_shapes` - library of saved curves, is_default flag marks active curve
+- `bot_market_weights` - per-market weight allocation
 
-**Backend (`backend/lightning.js`)**:
-- `generateAuthChallenge()` - Creates k1 challenge, stores in DB
-- `verifySignature()` - secp256k1 signature verification
-- `processAuthCallback()` - Handles wallet callback
-- `getAuthStatus()` - Status polling
-- `generateFriendlyUsername()` - Creates usernames like "SwiftSatoshi42"
-
-**Database Table**: `lnurl_auth_challenges`
-
-**API Endpoints**:
-- `GET /api/auth/lnurl` - Generate challenge
-- `GET /api/auth/lnurl/callback` - Wallet callback (LNURL spec)
-- `GET /api/auth/lnurl/status/:k1` - Status polling
-- `POST /api/auth/lnurl/complete` - Complete login, issue JWT
-
-**Frontend (`frontend/src/App.jsx`)**:
-- `LightningLoginModal` component with QR code
-- Polling for signature verification
-- "Open in Wallet App" deep link
-- Copy LNURL button
-- Success/error states with animations
-- "⚡ Login with Lightning" button in LoginModal
-
-### Technical Stack
-- **Backend**: Node.js, Express, better-sqlite3
-- **Frontend**: React + Vite
-- **Auth**: JWT + bcrypt + Google OAuth
-- **Styling**: Custom CSS (dark theme, Bitcoin orange accent)
-
-## Bot Architecture
-
-```
-                    ┌─────────────────┐
-                    │   Buy Curve     │
-                    │ [5%: 50k sats]  │
-                    │ [10%: 100k]     │
-                    │ [20%: 200k]     │
-                    └────────┬────────┘
-                             │
-                             ▼
-┌──────────────┐    ┌─────────────────┐    ┌──────────────┐
-│ User buys    │───▶│  Order Match    │───▶│ Bot Exposure │
-│ YES shares   │    │  (atomic tx)    │    │   Updated    │
-└──────────────┘    └────────┬────────┘    └──────┬───────┘
-                             │                     │
-                             │                     ▼
-                             │            ┌─────────────────┐
-                             │            │  Tier Changed?  │
-                             │            └────────┬────────┘
-                             │                     │ yes
-                             ▼                     ▼
-                    ┌─────────────────┐    ┌─────────────────┐
-                    │  Return to      │◀───│ ATOMIC PULLBACK │
-                    │  User           │    │ (reduce orders) │
-                    └─────────────────┘    └─────────────────┘
-```
-
-## Railway Operations Reference
-
-**Modifying the production database on Railway:**
-
-1. **Local vs Production databases are SEPARATE** - Changes to `backend/predictions.db` locally do NOT affect Railway. Railway uses a volume mount at `/data/predictions.db`.
-
-2. **`railway run` does NOT have filesystem access** to the Railway container. It runs commands locally with Railway's environment variables - can't access the SQLite file on the server.
-
-3. **`railway ssh` IS the correct approach**:
-   ```bash
-   # SSH into the container
-   railway ssh -s <service-name>
-   
-   # Run a command directly without interactive shell:
-   railway ssh -s <service-name> -- <command>
-   
-   # Example: Run a script
-   railway ssh -s Predictions -- node backend/make-admin.js user@email.com
-   ```
-
-4. **Create utility scripts** (like `make-admin.js`) and push them to the repo, then run via SSH. This is more reliable than trying to run raw SQL remotely.
-
-5. **JWT tokens cache user data** - After promoting a user to admin, they must log out and back in to get a new token with `is_admin: true`.
-
-6. **CLI commands available**: `railway ssh`, `railway logs`, `railway shell` (local env vars only), `railway connect` (database services like Postgres)
-
-## Configuration
-
-**Default Settings**:
-- Max Acceptable Loss: 10M sats (~$1000 at current rates)
-- Threshold Percent: 1% (pullback every 1% of max loss booked)
-- Global Multiplier: 1.0
-- Bot Status: Inactive (must manually activate)
-
-**Default Buy Curve**:
-- 5%: 50,000 sats
-- 10%: 100,000 sats
-- 15%: 150,000 sats
-- 20%: 200,000 sats
-- 25%: 200,000 sats
-- 30%: 150,000 sats
-- 40%: 100,000 sats
-- 50%: 50,000 sats
-
-## Files Changed (Jan 27, 2026)
-
-### Backend
-- `backend/database.js` - Added bot tables + curve shape library + market weights tables
-- `backend/bot.js` - New bot module with curve shape generators (bell, exponential, sigmoid, parabolic, etc.) and market weight auto-rebalancing
-- `backend/server.js` - Bot import, atomic hook, admin endpoints + shape library + weights routes
-
-### Frontend
-- `frontend/src/api.js` - Bot API functions + shape library + market weights APIs
-- `frontend/src/BotAdmin.jsx` - New bot admin component with mathematically meaningful curve presets
-- `frontend/src/App.jsx` - Bot admin integration
-- `frontend/src/App.css` - Bot admin styles
-
-## Curve Shape System (NEW)
-
-**Shape Types Available:**
-| Shape | Formula | Use Case |
-|-------|---------|----------|
-| Bell (Gaussian) | `e^(-(p-μ)²/2σ²)` | Concentrate around expected probability |
-| Flat | `k` (constant) | No opinion on fill location |
-| Exponential Decay | `e^(-bp)` | Heavy at low prices, fade at higher |
-| Logarithmic | `ln(101-p)` | Decreasing returns |
-| Sigmoid | `1/(1+e^(-k(p-mid)))` | Threshold thinking |
-| Parabolic | `(max-p)²` | Strongly favor low prices |
-
-**Key Concepts:**
-- Shapes are **normalized** (sum to 1.0) and **scaled** by budget/weight
-- Saved shapes can be reused across all markets
-- Market weights auto-rebalance when you adjust any single market
-- Relative odds vector support for bulk weight adjustment
+### Technical Debt
+- Pullback currently scales all orders proportionally; could be smarter
+- No batch SQL update for order scaling (done one-by-one)
+- lastPullbackExposure tracking not implemented yet

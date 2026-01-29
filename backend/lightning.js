@@ -537,6 +537,51 @@ async function getNodeInfo() {
 }
 
 /**
+ * Get channel balance info (for checking outbound liquidity before withdrawals)
+ * @returns {Object} Channel balance info
+ */
+async function getChannelBalance() {
+  if (isVoltageConfigured()) {
+    try {
+      const result = await lndRequest('/v1/channels', { method: 'GET' });
+      const channels = result.channels || [];
+      
+      let totalLocal = 0;
+      let totalRemote = 0;
+      let totalCapacity = 0;
+      
+      for (const ch of channels) {
+        if (ch.active) {
+          totalLocal += parseInt(ch.local_balance || 0);
+          totalRemote += parseInt(ch.remote_balance || 0);
+          totalCapacity += parseInt(ch.capacity || 0);
+        }
+      }
+      
+      return {
+        outbound_sats: totalLocal, // Available for withdrawals/payments
+        inbound_sats: totalRemote, // Available for receiving deposits
+        total_capacity: totalCapacity,
+        active_channels: channels.filter(c => c.active).length,
+        is_real: true,
+      };
+    } catch (err) {
+      console.error('Failed to get channel balance:', err);
+      return { outbound_sats: 0, inbound_sats: 0, error: err.message, is_real: true };
+    }
+  }
+  
+  // Mock: unlimited for development
+  return {
+    outbound_sats: 10000000, // 10M sats mock
+    inbound_sats: 10000000,
+    total_capacity: 20000000,
+    active_channels: 1,
+    is_real: false,
+  };
+}
+
+/**
  * Check Voltage connection status
  * @returns {Object} Connection status
  */
@@ -574,6 +619,7 @@ module.exports = {
   simulatePayment,
   payInvoice,
   getNodeInfo,
+  getChannelBalance,
   mockInvoices,
   
   // Voltage helpers

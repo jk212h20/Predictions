@@ -548,7 +548,7 @@ export default function BotAdmin({ onClose }) {
                     {savedCurves.map(curve => (
                       <div key={curve.id} className="custom-curve-item">
                         <button 
-                          className="btn btn-small btn-custom"
+                          className={`btn btn-small ${curve.is_default ? 'btn-primary' : 'btn-custom'}`}
                           onClick={() => {
                             console.log('Loading curve:', curve);
                             try {
@@ -568,10 +568,30 @@ export default function BotAdmin({ onClose }) {
                               alert('Failed to load curve: ' + err.message);
                             }
                           }}
-                          title={`Load "${curve.name}"`}
+                          title={`Load "${curve.name}"${curve.is_default ? ' (ACTIVE)' : ''}`}
                         >
-                          ✏️ {curve.name}
+                          {curve.is_default ? '✓ ' : '✏️ '}{curve.name}
                         </button>
+                        {!curve.is_default && (
+                          <button 
+                            className="btn btn-small btn-success"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (!confirm(`Set "${curve.name}" as the active curve for all deployments?`)) return;
+                              try {
+                                await api.setDefaultShape(curve.id);
+                                await loadSavedCurves();
+                                alert(`"${curve.name}" is now the active curve!`);
+                              } catch (err) {
+                                alert('Failed to set active: ' + err.message);
+                              }
+                            }}
+                            title={`Set "${curve.name}" as active`}
+                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem' }}
+                          >
+                            Set Active
+                          </button>
+                        )}
                         <button 
                           className="btn btn-small btn-delete-curve"
                           onClick={async (e) => {
@@ -961,8 +981,9 @@ export default function BotAdmin({ onClose }) {
                 <div className="loading-preview">Loading preview...</div>
               ) : deploymentPreview ? (
                 <>
-                  {/* SUMMARY */}
+                  {/* SUMMARY - Now shows full budget calculation */}
                   <div className="deploy-summary">
+                    <h4>💰 Budget Calculation</h4>
                     <div className="summary-row">
                       <label>Your Balance:</label>
                       <value>{formatSats(deploymentPreview.user_balance)} sats</value>
@@ -977,6 +998,33 @@ export default function BotAdmin({ onClose }) {
                       <label>Effective Balance:</label>
                       <value>{formatSats(deploymentPreview.effective_balance)} sats</value>
                     </div>
+                    <div className="summary-row">
+                      <label>Max Budget (capped at max_loss):</label>
+                      <value>{formatSats(deploymentPreview.max_budget)} sats</value>
+                    </div>
+                    
+                    <h4>🔄 Liquidity Formula</h4>
+                    <div className="formula-breakdown">
+                      <div className="formula-row">
+                        <span>Max Budget</span>
+                        <span>× {deploymentPreview.config?.global_multiplier || 1}x multiplier</span>
+                        <span>= {formatSats(deploymentPreview.displayed_liquidity)} displayed</span>
+                      </div>
+                      <div className="formula-row">
+                        <span>Displayed</span>
+                        <span>× {((deploymentPreview.pullback_ratio || 1) * 100).toFixed(1)}% pullback</span>
+                        <span>= {formatSats(deploymentPreview.deployable_budget)} deployable</span>
+                      </div>
+                    </div>
+                    
+                    {deploymentPreview.current_exposure > 0 && (
+                      <div className="exposure-info">
+                        <label>Current Exposure:</label>
+                        <value>{formatSats(deploymentPreview.current_exposure)} sats ({((deploymentPreview.current_exposure / deploymentPreview.config?.max_acceptable_loss) * 100).toFixed(1)}% of max)</value>
+                      </div>
+                    )}
+                    
+                    <h4>📊 Deployment Summary</h4>
                     <div className="summary-row">
                       <label>Total Deployment Cost:</label>
                       <value className={deploymentPreview.has_sufficient_balance ? '' : 'error'}>
@@ -996,7 +1044,13 @@ export default function BotAdmin({ onClose }) {
                     
                     {deploymentPreview.total_markets === 0 && (
                       <div className="warning-banner">
-                        ⚠️ No markets with assigned weights. Click "Initialize Weights" in Configuration first.
+                        ⚠️ No markets with assigned weights. Click "Initialize from Scores" in Tiers tab first.
+                      </div>
+                    )}
+                    
+                    {deploymentPreview.pullback_ratio < 1 && (
+                      <div className="info-banner">
+                        ℹ️ Pullback active: showing {((deploymentPreview.pullback_ratio || 1) * 100).toFixed(1)}% of full liquidity due to existing exposure.
                       </div>
                     )}
                   </div>

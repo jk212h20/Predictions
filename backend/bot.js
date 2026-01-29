@@ -6,12 +6,19 @@
  * 
  * Key concepts:
  * - Curve Shapes: Normalized distributions (bell, exponential, etc.) stored in library
- * - Market Weights: Per-market budget allocation that auto-rebalances
- * - Relative Odds: User-provided estimates that adjust weights
- * - Pullback: Automatic reduction of offers when exposure crosses thresholds
- * - Max Risk: Guaranteed maximum loss through atomic execution
+ * - Market Weights: Per-market budget allocation that auto-rebalances  
+ * - Multiplier: Display more liquidity than budget (e.g., 10× means show 10M with 1M budget)
+ * - Pullback: Automatic reduction when exposure crosses 1% thresholds
+ * - Max Risk: Guaranteed maximum loss through pullback formula
  * 
- * Formula: effective_curve = shape × max_loss × market_weight × pullback_ratio
+ * PULLBACK FORMULA:
+ *   pullback_ratio = (max_loss - exposure) / max_loss
+ *   displayed_liquidity = max_loss × multiplier × pullback_ratio
+ * 
+ * DEPLOYMENT FORMULA:
+ *   effective_budget = min(user_balance, max_loss) × multiplier × pullback_ratio
+ *   For each market: market_budget = effective_budget × tier_weight
+ *   For each price: order_amount = market_budget × shape_weight
  */
 
 const { v4: uuidv4 } = require('uuid');
@@ -982,30 +989,42 @@ function getExposurePercent(currentExposure, maxLoss) {
 
 /**
  * Update exposure tracking (called after order fills)
+ * 
+ * FIXED: Now uses 1% thresholds instead of 10% tiers
+ * This triggers pullback more frequently for smoother liquidity adjustment
  */
 function updateExposure(newExposure) {
   const config = getConfig();
   const oldExposure = getExposure();
   
   // Calculate exposure percentage for pullback trigger
-  const oldPercent = Math.floor((oldExposure.total_at_risk / config.max_acceptable_loss) * 100);
-  const newPercent = Math.floor((newExposure / config.max_acceptable_loss) * 100);
+  // Using 1% threshold (threshold_percent from config)
+  const threshold = config.threshold_percent || 1;
+  const oldPercent = (oldExposure.total_at_risk / config.max_acceptable_loss) * 100;
+  const newPercent = (newExposure / config.max_acceptable_loss) * 100;
+  
+  // Current tier = number of thresholds crossed
+  const oldTier = Math.floor(oldPercent / threshold);
+  const newTier = Math.floor(newPercent / threshold);
   
   db.prepare(`
     UPDATE bot_exposure
     SET total_at_risk = ?, current_tier = ?, updated_at = datetime('now')
     WHERE id = 'default'
-  `).run(newExposure, newPercent);
+  `).run(newExposure, newTier);
   
-  // Trigger pullback if we crossed a 10% threshold (for logging/UI purposes)
-  const tierChanged = Math.floor(oldPercent / 10) !== Math.floor(newPercent / 10);
+  // Trigger pullback if we crossed any threshold boundary
+  const tierChanged = oldTier !== newTier;
   
   return {
     oldExposure: oldExposure.total_at_risk,
     newExposure,
     oldPercent,
     newPercent,
-    tierChanged
+    oldTier,
+    newTier,
+    tierChanged,
+    threshold
   };
 }
 
@@ -1161,7 +1180,11 @@ function deployMarketOrders(marketId, userId) {
 
 /**
  * Deploy bot orders for all attendance markets
- * FIXED: Now calculates effective balance and distributes proportionally across all markets
+ * 
+ * FIXED: Now uses the correct formula:
+ *   deployable_budget = min(user_balance, max_loss) × multiplier × pullback_ratio
+ * 
+ * This matches getDeploymentPreview exactly.
  * 
  * @param {string} userId - User ID to place orders under (the logged-in user)
  */
@@ -1209,23 +1232,42 @@ function deployAllOrders(userId) {
   // Step 3: Calculate effective balance (available for deployment)
   const effectiveBalance = user.balance_sats + totalRefund;
   
-  // Step 4: Get all attendance markets
+  // Step 4: Calculate deployable budget using the formula:
+  // deployable_budget = min(user_balance, max_loss) × multiplier × pullback_ratio
+  const maxBudget = Math.min(effectiveBalance, config.max_acceptable_loss);
+  const displayedLiquidity = maxBudget * config.global_multiplier;
+  const currentExposure = calculateCurrentExposure();
+  const pullbackRatio = calculatePullbackRatio(currentExposure, config.max_acceptable_loss);
+  const deployableBudget = displayedLiquidity * pullbackRatio;
+  
+  // Step 5: Get all attendance markets
   const markets = db.prepare(`
     SELECT m.id FROM markets m WHERE m.type = 'attendance' AND m.status = 'open'
   `).all();
   
   if (markets.length === 0) {
-    return { success: true, deployed: 0, failed: 0, totalOrders: 0, totalCost: 0, totalRefunded: totalRefund };
+    return { 
+      success: true, 
+      deployed: 0, 
+      failed: 0, 
+      totalOrders: 0, 
+      totalCost: 0, 
+      totalRefunded: totalRefund,
+      effectiveBalance,
+      maxBudget,
+      displayedLiquidity,
+      pullbackRatio,
+      deployableBudget
+    };
   }
   
-  // Step 5: Calculate total deployment cost using effective balance as budget
-  // First pass: calculate what WOULD be deployed to size the actual orders
+  // Step 6: Calculate orders using deployableBudget
   let allOrders = [];
   let totalTheoreticCost = 0;
   
   for (const market of markets) {
-    // Get effective curve using the full balance as reference
-    const effectiveCurve = getEffectiveCurve(market.id, 'buy', effectiveBalance);
+    // Get effective curve using deployableBudget (includes multiplier and pullback)
+    const effectiveCurve = getEffectiveCurve(market.id, 'buy', deployableBudget);
     
     if (!effectiveCurve || effectiveCurve.length === 0) {
       continue;
@@ -1245,14 +1287,27 @@ function deployAllOrders(userId) {
     }
   }
   
-  // Step 6: If theoretical cost > balance, scale down proportionally
+  // Step 7: If theoretical cost > balance, scale down proportionally
+  // This ensures we never exceed actual balance, even with multiplier
   let scaleFactor = 1.0;
   if (totalTheoreticCost > effectiveBalance && totalTheoreticCost > 0) {
     scaleFactor = effectiveBalance / totalTheoreticCost;
   }
   
-  // Step 7: Place scaled orders
-  const results = { deployed: 0, failed: 0, totalOrders: 0, totalCost: 0, totalRefunded: totalRefund };
+  // Step 8: Place scaled orders
+  const results = { 
+    deployed: 0, 
+    failed: 0, 
+    totalOrders: 0, 
+    totalCost: 0, 
+    totalRefunded: totalRefund,
+    effectiveBalance,
+    maxBudget,
+    displayedLiquidity,
+    pullbackRatio,
+    deployableBudget,
+    currentExposure
+  };
   const marketOrderCounts = {};
   
   for (const order of allOrders) {
@@ -1288,15 +1343,27 @@ function deployAllOrders(userId) {
   }
   
   results.deployed = Object.keys(marketOrderCounts).length;
+  results.scaleFactor = scaleFactor;
+  
+  // Step 9: Update bot_user_id to this user (for pullback tracking)
+  db.prepare(`
+    UPDATE bot_config SET bot_user_id = ?, updated_at = datetime('now') WHERE id = 'default'
+  `).run(userId);
   
   logBotAction('deploy_all', JSON.stringify({ 
     userId, 
     effectiveBalance,
+    maxBudget,
+    displayedLiquidity,
+    pullbackRatio: pullbackRatio.toFixed(4),
+    deployableBudget,
     scaleFactor: scaleFactor.toFixed(4),
-    ...results 
+    totalOrders: results.totalOrders,
+    totalCost: results.totalCost,
+    deployed: results.deployed
   }));
   
-  return { success: true, ...results, scaleFactor };
+  return { success: true, ...results };
 }
 
 /**
@@ -1466,6 +1533,11 @@ function atomicPullback(filledAmount, marketId) {
 /**
  * Get a preview of what would be deployed without actually deploying
  * This shows exactly what orders will be placed for each market
+ * 
+ * FIXED: Now uses effectiveBalance as the budget, matching deployAllOrders exactly
+ * 
+ * Formula: displayed_liquidity = effectiveBalance × multiplier × pullback_ratio
+ * 
  * @param {string} userId - User ID to check balance against
  */
 function getDeploymentPreview(userId) {
@@ -1509,13 +1581,27 @@ function getDeploymentPreview(userId) {
   // Calculate effective balance (current + refund from cancelled orders)
   const effectiveBalance = user.balance_sats + totalRefund;
   
+  // Cap effective budget at max_acceptable_loss (can't risk more than you've set)
+  const maxBudget = Math.min(effectiveBalance, config.max_acceptable_loss);
+  
+  // Apply multiplier to get displayed liquidity
+  const displayedLiquidity = maxBudget * config.global_multiplier;
+  
+  // Calculate current pullback ratio (for informational purposes)
+  const currentExposure = calculateCurrentExposure();
+  const pullbackRatio = calculatePullbackRatio(currentExposure, config.max_acceptable_loss);
+  
+  // Effective budget after pullback (what we'd actually deploy)
+  const deployableBudget = displayedLiquidity * pullbackRatio;
+  
   // Calculate what would be deployed to each market
   const marketPreviews = [];
   let totalCost = 0;
   let totalOrders = 0;
   
   for (const market of markets) {
-    const effectiveCurve = getEffectiveCurve(market.id, 'buy');
+    // FIXED: Pass the deployableBudget as the total budget
+    const effectiveCurve = getEffectiveCurve(market.id, 'buy', deployableBudget);
     
     if (!effectiveCurve || effectiveCurve.length === 0) {
       marketPreviews.push({
@@ -1573,6 +1659,11 @@ function getDeploymentPreview(userId) {
     user_balance: user.balance_sats,
     existing_orders_refund: totalRefund,
     effective_balance: effectiveBalance,
+    max_budget: maxBudget,
+    displayed_liquidity: displayedLiquidity,
+    pullback_ratio: pullbackRatio,
+    deployable_budget: deployableBudget,
+    current_exposure: currentExposure,
     total_cost: totalCost,
     total_orders: totalOrders,
     total_markets: marketPreviews.filter(m => !m.disabled).length,
@@ -1580,8 +1671,9 @@ function getDeploymentPreview(userId) {
     shortfall: hasBalance ? 0 : totalCost - effectiveBalance,
     markets: marketPreviews,
     config: {
-      total_liquidity: config.total_liquidity,
+      max_acceptable_loss: config.max_acceptable_loss,
       global_multiplier: config.global_multiplier,
+      threshold_percent: config.threshold_percent,
       is_active: !!config.is_active
     }
   };

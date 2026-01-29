@@ -234,6 +234,27 @@ db.exec(`
 
   -- Index for weights
   CREATE INDEX IF NOT EXISTS idx_bot_weights_market ON bot_market_weights(market_id);
+
+  -- ==================== PENDING WITHDRAWALS ====================
+
+  -- Pending withdrawals requiring admin approval
+  CREATE TABLE IF NOT EXISTS pending_withdrawals (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    amount_sats INTEGER NOT NULL,
+    payment_request TEXT NOT NULL,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected', 'completed', 'failed')),
+    rejection_reason TEXT,
+    approved_by TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    processed_at TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (approved_by) REFERENCES users(id)
+  );
+
+  -- Index for pending withdrawals
+  CREATE INDEX IF NOT EXISTS idx_pending_withdrawals_status ON pending_withdrawals(status);
+  CREATE INDEX IF NOT EXISTS idx_pending_withdrawals_user ON pending_withdrawals(user_id);
 `);
 
 // Migration: Add avatar_url column if it doesn't exist
