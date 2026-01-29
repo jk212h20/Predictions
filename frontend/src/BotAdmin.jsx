@@ -96,6 +96,9 @@ export default function BotAdmin({ onClose }) {
   const [loadingReconciliation, setLoadingReconciliation] = useState(false);
   const [reconciliationView, setReconciliationView] = useState('overview'); // overview, ln-deposits, ln-withdrawals, onchain-deposits, onchain-withdrawals
   const [matchData, setMatchData] = useState(null);
+  
+  // Withdrawal card expansion state
+  const [expandedWithdrawal, setExpandedWithdrawal] = useState(null);
 
   useEffect(() => {
     loadAllData();
@@ -1483,29 +1486,30 @@ export default function BotAdmin({ onClose }) {
           {/* WITHDRAWALS TAB */}
           {activeTab === 'withdrawals' && (
             <div className="bot-withdrawals">
-              <h3>💸 All Pending Withdrawals ({pendingWithdrawals.length + pendingOnchainWithdrawals.length})</h3>
+              <h3>💸 Pending Withdrawals ({pendingWithdrawals.length + pendingOnchainWithdrawals.length})</h3>
               
-              {/* Balance Overview */}
-              <div className="channel-balance-info">
-                {channelBalance && (
-                  <>
-                    <div className="balance-stat">
-                      <label>⚡ Lightning Outbound</label>
-                      <value>{formatSats(channelBalance.outbound_sats)} sats</value>
-                    </div>
-                    <div className="balance-stat">
-                      <label>⚡ Lightning Inbound</label>
-                      <value>{formatSats(channelBalance.inbound_sats)} sats</value>
-                    </div>
-                    {!channelBalance.is_real && (
-                      <div className="mock-warning">⚠️ Mock Mode - No real Lightning</div>
-                    )}
-                  </>
-                )}
-                {onchainBalance && (
-                  <div className="balance-stat">
-                    <label>⛓️ On-Chain Balance</label>
-                    <value>{formatSats(onchainBalance.balance_sats)} sats</value>
+              {/* Compact Balance Overview */}
+              <div className="withdrawal-balance-grid">
+                <div className="balance-box lightning">
+                  <span className="balance-icon">⚡</span>
+                  <div className="balance-content">
+                    <span className="balance-label">Lightning</span>
+                    <span className="balance-values">
+                      <span className="outbound">↑ {formatSats(channelBalance?.outbound_sats || 0)}</span>
+                      <span className="inbound">↓ {formatSats(channelBalance?.inbound_sats || 0)}</span>
+                    </span>
+                  </div>
+                </div>
+                <div className="balance-box onchain">
+                  <span className="balance-icon">⛓️</span>
+                  <div className="balance-content">
+                    <span className="balance-label">On-Chain</span>
+                    <span className="balance-value">{formatSats(onchainBalance?.balance_sats || 0)}</span>
+                  </div>
+                </div>
+                {channelBalance && !channelBalance.is_real && (
+                  <div className="balance-box mock">
+                    <span>⚠️ Mock Mode</span>
                   </div>
                 )}
               </div>
@@ -1517,141 +1521,141 @@ export default function BotAdmin({ onClose }) {
                   <p>✅ No pending withdrawals</p>
                 </div>
               ) : (
-                <div className="withdrawals-list">
+                <div className="withdrawals-list-compact">
                   {/* LIGHTNING WITHDRAWALS */}
-                  {pendingWithdrawals.map(pw => (
-                    <div key={`ln-${pw.id}`} className="withdrawal-card lightning">
-                      <div className="withdrawal-header">
-                        <span className="withdrawal-type-badge lightning">⚡ Lightning</span>
-                        <span className="withdrawal-user">{pw.username || pw.email || 'Unknown User'}</span>
-                        <span className="withdrawal-amount">{formatSats(pw.amount_sats)} sats</span>
-                      </div>
-                      <div className="withdrawal-details">
-                        <div><label>User Total Deposits:</label> {formatSats(pw.user_total_deposits)} sats</div>
-                        <div><label>Requested:</label> {new Date(pw.created_at).toLocaleString()}</div>
-                        <div className="invoice-preview">
-                          <label>Invoice:</label> 
-                          <code>{pw.payment_request?.substring(0, 50)}...</code>
+                  {pendingWithdrawals.map(pw => {
+                    const isExpanded = expandedWithdrawal === `ln-${pw.id}`;
+                    const hasLiquidity = !channelBalance || channelBalance.outbound_sats >= pw.amount_sats;
+                    return (
+                      <div key={`ln-${pw.id}`} className={`withdrawal-row ${isExpanded ? 'expanded' : ''} ${!hasLiquidity ? 'low-liquidity' : ''}`}>
+                        <div className="withdrawal-summary" onClick={() => setExpandedWithdrawal(isExpanded ? null : `ln-${pw.id}`)}>
+                          <span className="w-type lightning">⚡</span>
+                          <span className="w-user">{pw.username || pw.email?.split('@')[0] || 'User'}</span>
+                          <span className="w-amount">{formatSats(pw.amount_sats)} sats</span>
+                          <span className="w-expand">{isExpanded ? '▲' : '▼'}</span>
+                          <div className="w-actions" onClick={e => e.stopPropagation()}>
+                            <button 
+                              className="btn btn-sm btn-approve"
+                              onClick={async () => {
+                                if (!confirm(`Approve ${formatSats(pw.amount_sats)} sats to ${pw.username || pw.email}?`)) return;
+                                setProcessingWithdrawal(pw.id);
+                                try {
+                                  await api.approveWithdrawal(pw.id);
+                                  const [withdrawals, balance] = await Promise.all([
+                                    api.getAdminPendingWithdrawals(),
+                                    api.getChannelBalance()
+                                  ]);
+                                  setPendingWithdrawals(withdrawals || []);
+                                  setChannelBalance(balance);
+                                } catch (err) {
+                                  alert('Failed: ' + err.message);
+                                }
+                                setProcessingWithdrawal(null);
+                              }}
+                              disabled={processingWithdrawal === pw.id || !hasLiquidity}
+                            >
+                              {processingWithdrawal === pw.id ? '...' : '✓'}
+                            </button>
+                            <button 
+                              className="btn btn-sm btn-reject"
+                              onClick={async () => {
+                                const reason = prompt('Reason (optional):');
+                                if (reason === null) return;
+                                setProcessingWithdrawal(pw.id);
+                                try {
+                                  await api.rejectWithdrawal(pw.id, reason || 'Rejected');
+                                  const withdrawals = await api.getAdminPendingWithdrawals();
+                                  setPendingWithdrawals(withdrawals || []);
+                                } catch (err) {
+                                  alert('Failed: ' + err.message);
+                                }
+                                setProcessingWithdrawal(null);
+                              }}
+                              disabled={processingWithdrawal === pw.id}
+                            >
+                              ✕
+                            </button>
+                          </div>
                         </div>
+                        {isExpanded && (
+                          <div className="withdrawal-expanded">
+                            <div className="w-detail"><label>Requested:</label> {new Date(pw.created_at).toLocaleString()}</div>
+                            <div className="w-detail"><label>User Deposits:</label> {formatSats(pw.user_total_deposits)} sats</div>
+                            <div className="w-detail invoice"><label>Invoice:</label> <code>{pw.payment_request}</code></div>
+                            {!hasLiquidity && (
+                              <div className="w-warning">⚠️ Insufficient liquidity ({formatSats(channelBalance?.outbound_sats || 0)} available)</div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <div className="withdrawal-actions">
-                        <button 
-                          className="btn btn-success"
-                          onClick={async () => {
-                            if (!confirm(`Approve Lightning withdrawal of ${formatSats(pw.amount_sats)} sats to ${pw.username || pw.email}?`)) return;
-                            setProcessingWithdrawal(pw.id);
-                            try {
-                              const result = await api.approveWithdrawal(pw.id);
-                              alert(`✅ Withdrawal approved! Payment hash: ${result.payment_hash?.substring(0, 20)}...`);
-                              // Refresh list
-                              const [withdrawals, balance] = await Promise.all([
-                                api.getAdminPendingWithdrawals(),
-                                api.getChannelBalance()
-                              ]);
-                              setPendingWithdrawals(withdrawals || []);
-                              setChannelBalance(balance);
-                            } catch (err) {
-                              alert('❌ Failed to approve: ' + err.message);
-                            }
-                            setProcessingWithdrawal(null);
-                          }}
-                          disabled={processingWithdrawal === pw.id || (channelBalance && channelBalance.outbound_sats < pw.amount_sats)}
-                        >
-                          {processingWithdrawal === pw.id ? 'Processing...' : '✅ Approve'}
-                        </button>
-                        <button 
-                          className="btn btn-danger"
-                          onClick={async () => {
-                            const reason = prompt('Reason for rejection (optional):');
-                            if (reason === null) return;
-                            setProcessingWithdrawal(pw.id);
-                            try {
-                              await api.rejectWithdrawal(pw.id, reason || 'Rejected by admin');
-                              alert('Withdrawal rejected. Funds returned to user.');
-                              const withdrawals = await api.getAdminPendingWithdrawals();
-                              setPendingWithdrawals(withdrawals || []);
-                            } catch (err) {
-                              alert('Failed to reject: ' + err.message);
-                            }
-                            setProcessingWithdrawal(null);
-                          }}
-                          disabled={processingWithdrawal === pw.id}
-                        >
-                          ❌ Reject
-                        </button>
-                      </div>
-                      {channelBalance && channelBalance.outbound_sats < pw.amount_sats && (
-                        <div className="liquidity-warning">
-                          ⚠️ Insufficient channel liquidity ({formatSats(channelBalance.outbound_sats)} available)
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                   
                   {/* ON-CHAIN WITHDRAWALS */}
-                  {pendingOnchainWithdrawals.map(pw => (
-                    <div key={`oc-${pw.id}`} className="withdrawal-card onchain">
-                      <div className="withdrawal-header">
-                        <span className="withdrawal-type-badge onchain">⛓️ On-Chain</span>
-                        <span className="withdrawal-user">{pw.username || pw.email || 'Unknown User'}</span>
-                        <span className="withdrawal-amount">{formatSats(pw.amount_sats)} sats</span>
-                      </div>
-                      <div className="withdrawal-details">
-                        <div><label>User On-Chain Deposits:</label> {formatSats(pw.user_total_onchain_deposits)} sats</div>
-                        <div><label>Requested:</label> {new Date(pw.created_at).toLocaleString()}</div>
-                        <div><label>Fee Paid By:</label> {pw.user_pays_fee ? 'User' : 'Platform (free withdrawal)'}</div>
-                        <div className="address-preview">
-                          <label>Address:</label> 
-                          <code>{pw.dest_address}</code>
+                  {pendingOnchainWithdrawals.map(pw => {
+                    const isExpanded = expandedWithdrawal === `oc-${pw.id}`;
+                    return (
+                      <div key={`oc-${pw.id}`} className={`withdrawal-row ${isExpanded ? 'expanded' : ''}`}>
+                        <div className="withdrawal-summary" onClick={() => setExpandedWithdrawal(isExpanded ? null : `oc-${pw.id}`)}>
+                          <span className="w-type onchain">⛓️</span>
+                          <span className="w-user">{pw.username || pw.email?.split('@')[0] || 'User'}</span>
+                          <span className="w-amount">{formatSats(pw.amount_sats)} sats</span>
+                          <span className="w-expand">{isExpanded ? '▲' : '▼'}</span>
+                          <div className="w-actions" onClick={e => e.stopPropagation()}>
+                            <button 
+                              className="btn btn-sm btn-approve"
+                              onClick={async () => {
+                                if (!confirm(`Approve ${formatSats(pw.amount_sats)} sats to ${pw.dest_address}?`)) return;
+                                setProcessingWithdrawal(pw.id);
+                                try {
+                                  await api.approveOnchainWithdrawal(pw.id);
+                                  const [onchainWithdrawals, onchainBal] = await Promise.all([
+                                    api.getAdminOnchainPendingWithdrawals(),
+                                    api.getOnchainBalance().catch(() => null)
+                                  ]);
+                                  setPendingOnchainWithdrawals(onchainWithdrawals || []);
+                                  setOnchainBalance(onchainBal);
+                                } catch (err) {
+                                  alert('Failed: ' + err.message);
+                                }
+                                setProcessingWithdrawal(null);
+                              }}
+                              disabled={processingWithdrawal === pw.id}
+                            >
+                              {processingWithdrawal === pw.id ? '...' : '✓'}
+                            </button>
+                            <button 
+                              className="btn btn-sm btn-reject"
+                              onClick={async () => {
+                                const reason = prompt('Reason (optional):');
+                                if (reason === null) return;
+                                setProcessingWithdrawal(pw.id);
+                                try {
+                                  await api.rejectOnchainWithdrawal(pw.id, reason || 'Rejected');
+                                  const onchainWithdrawals = await api.getAdminOnchainPendingWithdrawals();
+                                  setPendingOnchainWithdrawals(onchainWithdrawals || []);
+                                } catch (err) {
+                                  alert('Failed: ' + err.message);
+                                }
+                                setProcessingWithdrawal(null);
+                              }}
+                              disabled={processingWithdrawal === pw.id}
+                            >
+                              ✕
+                            </button>
+                          </div>
                         </div>
+                        {isExpanded && (
+                          <div className="withdrawal-expanded">
+                            <div className="w-detail"><label>Requested:</label> {new Date(pw.created_at).toLocaleString()}</div>
+                            <div className="w-detail"><label>User Deposits:</label> {formatSats(pw.user_total_onchain_deposits)} sats</div>
+                            <div className="w-detail"><label>Fee:</label> {pw.user_pays_fee ? 'User pays' : 'Platform (free)'}</div>
+                            <div className="w-detail address"><label>Address:</label> <code>{pw.dest_address}</code></div>
+                          </div>
+                        )}
                       </div>
-                      <div className="withdrawal-actions">
-                        <button 
-                          className="btn btn-success"
-                          onClick={async () => {
-                            if (!confirm(`Approve on-chain withdrawal of ${formatSats(pw.amount_sats)} sats to ${pw.dest_address}?`)) return;
-                            setProcessingWithdrawal(pw.id);
-                            try {
-                              const result = await api.approveOnchainWithdrawal(pw.id);
-                              alert(`✅ On-chain withdrawal approved! TXID: ${result.txid?.substring(0, 20)}...`);
-                              const [onchainWithdrawals, onchainBal] = await Promise.all([
-                                api.getAdminOnchainPendingWithdrawals(),
-                                api.getOnchainBalance().catch(() => null)
-                              ]);
-                              setPendingOnchainWithdrawals(onchainWithdrawals || []);
-                              setOnchainBalance(onchainBal);
-                            } catch (err) {
-                              alert('❌ Failed to approve: ' + err.message);
-                            }
-                            setProcessingWithdrawal(null);
-                          }}
-                          disabled={processingWithdrawal === pw.id}
-                        >
-                          {processingWithdrawal === pw.id ? 'Processing...' : '✅ Approve'}
-                        </button>
-                        <button 
-                          className="btn btn-danger"
-                          onClick={async () => {
-                            const reason = prompt('Reason for rejection (optional):');
-                            if (reason === null) return;
-                            setProcessingWithdrawal(pw.id);
-                            try {
-                              await api.rejectOnchainWithdrawal(pw.id, reason || 'Rejected by admin');
-                              alert('On-chain withdrawal rejected. Funds returned to user.');
-                              const onchainWithdrawals = await api.getAdminOnchainPendingWithdrawals();
-                              setPendingOnchainWithdrawals(onchainWithdrawals || []);
-                            } catch (err) {
-                              alert('Failed to reject: ' + err.message);
-                            }
-                            setProcessingWithdrawal(null);
-                          }}
-                          disabled={processingWithdrawal === pw.id}
-                        >
-                          ❌ Reject
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               
@@ -1677,7 +1681,7 @@ export default function BotAdmin({ onClose }) {
                 }}
                 style={{ marginTop: '1rem' }}
               >
-                🔄 Refresh All
+                🔄 Refresh
               </button>
             </div>
           )}

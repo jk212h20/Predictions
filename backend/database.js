@@ -256,6 +256,44 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_pending_withdrawals_status ON pending_withdrawals(status);
   CREATE INDEX IF NOT EXISTS idx_pending_withdrawals_user ON pending_withdrawals(user_id);
 
+  -- ==================== LOGIN HISTORY ====================
+
+  -- Track all successful logins for audit
+  CREATE TABLE IF NOT EXISTS login_history (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    login_method TEXT NOT NULL CHECK(login_method IN ('email', 'google', 'lnurl', 'demo')),
+    ip_address TEXT,
+    user_agent TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  -- Index for login history
+  CREATE INDEX IF NOT EXISTS idx_login_history_user ON login_history(user_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_login_history_created ON login_history(created_at);
+
+  -- ==================== ADMIN AUDIT LOG ====================
+
+  -- Track admin actions on user accounts
+  CREATE TABLE IF NOT EXISTS admin_audit_log (
+    id TEXT PRIMARY KEY,
+    admin_user_id TEXT NOT NULL,
+    target_user_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN ('balance_adjust', 'toggle_admin', 'disable_account', 'enable_account', 'force_password_reset', 'manual_note')),
+    details TEXT,
+    old_value TEXT,
+    new_value TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (admin_user_id) REFERENCES users(id),
+    FOREIGN KEY (target_user_id) REFERENCES users(id)
+  );
+
+  -- Index for admin audit log
+  CREATE INDEX IF NOT EXISTS idx_admin_audit_admin ON admin_audit_log(admin_user_id);
+  CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit_log(target_user_id);
+  CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit_log(action);
+
   -- ==================== ON-CHAIN BITCOIN ====================
 
   -- On-chain deposit addresses and tracking
@@ -335,6 +373,20 @@ try {
 // Migration: Add free_onchain_withdrawals_used column for tracking free withdrawal quota
 try {
   db.exec(`ALTER TABLE users ADD COLUMN free_onchain_withdrawals_used INTEGER DEFAULT 0`);
+} catch (e) {
+  // Column already exists, ignore
+}
+
+// Migration: Add is_disabled column for account suspension
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN is_disabled INTEGER DEFAULT 0`);
+} catch (e) {
+  // Column already exists, ignore
+}
+
+// Migration: Add last_login_at column for tracking activity
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN last_login_at TEXT`);
 } catch (e) {
   // Column already exists, ignore
 }

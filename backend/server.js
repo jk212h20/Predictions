@@ -103,6 +103,9 @@ app.post('/api/auth/register', async (req, res) => {
       { expiresIn: '7d' }
     );
     
+    // Record login
+    recordLogin(user.id, 'email', req);
+    
     // Don't send password_hash to client
     const { password_hash: _, ...safeUser } = user;
     res.json({ token, user: safeUser });
@@ -143,6 +146,9 @@ app.post('/api/auth/login', async (req, res) => {
       JWT_SECRET,
       { expiresIn: '7d' }
     );
+    
+    // Record login
+    recordLogin(user.id, 'email', req);
     
     // Don't send password_hash to client
     const { password_hash: _, ...safeUser } = user;
@@ -3174,6 +3180,459 @@ app.get('/api/admin/reconciliation/match/onchain-withdrawals', authMiddleware, a
   } catch (err) {
     console.error('Failed to match on-chain withdrawals:', err);
     res.status(500).json({ error: 'Failed to match on-chain withdrawals', message: err.message });
+  }
+});
+
+// ==================== ADMIN USER MANAGEMENT ROUTES ====================
+
+// Helper function to record login history
+function recordLogin(userId, method, req) {
+  try {
+    const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    db.prepare(`
+      INSERT INTO login_history (id, user_id, login_method, ip_address, user_agent)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(uuidv4(), userId, method, ip, userAgent);
+    
+    // Update last_login_at
+    db.prepare('UPDATE users SET last_login_at = datetime("now") WHERE id = ?').run(userId);
+  } catch (err) {
+    console.error('Failed to record login:', err);
+  }
+}
+
+// Helper function to record admin audit log
+function recordAdminAction(adminUserId, targetUserId, action, details, oldValue, newValue) {
+  try {
+    db.prepare(`
+      INSERT INTO admin_audit_log (id, admin_user_id, target_user_id, action, details, old_value, new_value)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(uuidv4(), adminUserId, targetUserId, action, details, oldValue, newValue);
+  } catch (err) {
+    console.error('Failed to record admin action:', err);
+  }
+}
+
+// Get all users with stats (admin)
+app.get('/api/admin/users', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const { search, sort = 'created_at', order = 'DESC', limit = 50, offset = 0 } = req.query;
+    
+    // Validate sort field to prevent SQL injection
+    const validSortFields = ['created_at', 'balance_sats', 'username', 'email', 'last_login_at', 'account_number'];
+    const sortField = validSortFields.includes(sort) ? sort : 'created_at';
+    const sortOrder = order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    
+    let whereClause = '';
+    const params = [];
+    
+    if (search) {
+      whereClause = `WHERE u.email LIKE ? OR u.username LIKE ? OR CAST(u.account_number AS TEXT) LIKE ?`;
+      const searchPattern = `%${search}%`;
+      params.push(searchPattern, searchPattern, searchPattern);
+    }
+    
+    const users = db.prepare(`
+      SELECT 
+        u.id, u.email, u.username, u.account_number, u.balance_sats, 
+        u.is_admin, u.is_disabled, u.created_at, u.last_login_at,
+        u.lightning_pubkey, u.google_id,
+        (SELECT COALESCE(SUM(amount_sats), 0) FROM transactions WHERE user_id = u.id AND type = 'deposit' AND status = 'completed') as total_deposits,
+        (SELECT COALESCE(SUM(ABS(amount_sats)), 0) FROM transactions WHERE user_id = u.id AND type = 'withdrawal' AND status = 'completed') as total_withdrawals,
+        (SELECT COUNT(*) FROM orders WHERE user_id = u.id) as total_orders,
+        (SELECT COUNT(*) FROM bets WHERE yes_user_id = u.id OR no_user_id = u.id) as total_bets,
+        (SELECT COUNT(*) FROM login_history WHERE user_id = u.id) as login_count
+      FROM users u
+      ${whereClause}
+      ORDER BY u.${sortField} ${sortOrder}
+      LIMIT ? OFFSET ?
+    `).all(...params, parseInt(limit), parseInt(offset));
+    
+    // Get total count
+    const countResult = db.prepare(`
+      SELECT COUNT(*) as total FROM users u ${whereClause}
+    `).get(...params);
+    
+    res.json({
+      users,
+      total: countResult.total,
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+  } catch (err) {
+    console.error('Failed to get users:', err);
+    res.status(500).json({ error: 'Failed to get users', message: err.message });
+  }
+});
+
+// Get single user with full details (admin)
+app.get('/api/admin/users/:id', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const user = db.prepare(`
+      SELECT 
+        u.*,
+        (SELECT COALESCE(SUM(amount_sats), 0) FROM transactions WHERE user_id = u.id AND type = 'deposit' AND status = 'completed') as total_deposits,
+        (SELECT COALESCE(SUM(ABS(amount_sats)), 0) FROM transactions WHERE user_id = u.id AND type = 'withdrawal' AND status = 'completed') as total_withdrawals,
+        (SELECT COALESCE(SUM(amount_sats), 0) FROM onchain_deposits WHERE user_id = u.id AND credited = 1) as total_onchain_deposits,
+        (SELECT COALESCE(SUM(amount_sats), 0) FROM onchain_withdrawals WHERE user_id = u.id AND status = 'completed') as total_onchain_withdrawals,
+        (SELECT COUNT(*) FROM orders WHERE user_id = u.id) as total_orders,
+        (SELECT COUNT(*) FROM orders WHERE user_id = u.id AND status IN ('open', 'partial')) as open_orders,
+        (SELECT COUNT(*) FROM bets WHERE yes_user_id = u.id OR no_user_id = u.id) as total_bets,
+        (SELECT COUNT(*) FROM bets WHERE (yes_user_id = u.id OR no_user_id = u.id) AND status = 'active') as active_bets,
+        (SELECT COUNT(*) FROM bets WHERE winner_user_id = u.id) as bets_won,
+        (SELECT COUNT(*) FROM login_history WHERE user_id = u.id) as login_count
+      FROM users u
+      WHERE u.id = ?
+    `).get(req.params.id);
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Remove sensitive data
+    delete user.password_hash;
+    
+    res.json(user);
+  } catch (err) {
+    console.error('Failed to get user:', err);
+    res.status(500).json({ error: 'Failed to get user', message: err.message });
+  }
+});
+
+// Get user's transaction history (admin)
+app.get('/api/admin/users/:id/transactions', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const { limit = 50, offset = 0, type } = req.query;
+    
+    let whereClause = 'WHERE t.user_id = ?';
+    const params = [req.params.id];
+    
+    if (type) {
+      whereClause += ' AND t.type = ?';
+      params.push(type);
+    }
+    
+    const transactions = db.prepare(`
+      SELECT t.*
+      FROM transactions t
+      ${whereClause}
+      ORDER BY t.created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, parseInt(limit), parseInt(offset));
+    
+    const countResult = db.prepare(`
+      SELECT COUNT(*) as total FROM transactions t ${whereClause}
+    `).get(...params);
+    
+    res.json({
+      transactions,
+      total: countResult.total,
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+  } catch (err) {
+    console.error('Failed to get user transactions:', err);
+    res.status(500).json({ error: 'Failed to get transactions', message: err.message });
+  }
+});
+
+// Get user's login history (admin)
+app.get('/api/admin/users/:id/logins', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const { limit = 50, offset = 0 } = req.query;
+    
+    const logins = db.prepare(`
+      SELECT * FROM login_history
+      WHERE user_id = ?
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(req.params.id, parseInt(limit), parseInt(offset));
+    
+    const countResult = db.prepare(`
+      SELECT COUNT(*) as total FROM login_history WHERE user_id = ?
+    `).get(req.params.id);
+    
+    res.json({
+      logins,
+      total: countResult.total,
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+  } catch (err) {
+    console.error('Failed to get user logins:', err);
+    res.status(500).json({ error: 'Failed to get logins', message: err.message });
+  }
+});
+
+// Get user's trading activity (admin)
+app.get('/api/admin/users/:id/activity', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const { limit = 50, offset = 0 } = req.query;
+    
+    // Get orders
+    const orders = db.prepare(`
+      SELECT o.*, m.title as market_title, g.name as grandmaster_name
+      FROM orders o
+      JOIN markets m ON o.market_id = m.id
+      LEFT JOIN grandmasters g ON m.grandmaster_id = g.id
+      WHERE o.user_id = ?
+      ORDER BY o.created_at DESC
+      LIMIT ?
+    `).all(req.params.id, parseInt(limit));
+    
+    // Get bets/positions
+    const bets = db.prepare(`
+      SELECT b.*, m.title as market_title, g.name as grandmaster_name,
+             CASE WHEN b.yes_user_id = ? THEN 'yes' ELSE 'no' END as user_side
+      FROM bets b
+      JOIN markets m ON b.market_id = m.id
+      LEFT JOIN grandmasters g ON m.grandmaster_id = g.id
+      WHERE b.yes_user_id = ? OR b.no_user_id = ?
+      ORDER BY b.created_at DESC
+      LIMIT ?
+    `).all(req.params.id, req.params.id, req.params.id, parseInt(limit));
+    
+    // Calculate P&L
+    const pnlResult = db.prepare(`
+      SELECT 
+        COALESCE(SUM(CASE WHEN winner_user_id = ? THEN amount_sats ELSE 0 END), 0) as total_won,
+        COALESCE(SUM(CASE WHEN (yes_user_id = ? OR no_user_id = ?) AND winner_user_id IS NOT NULL AND winner_user_id != ? THEN amount_sats ELSE 0 END), 0) as total_lost
+      FROM bets
+      WHERE (yes_user_id = ? OR no_user_id = ?) AND status = 'settled'
+    `).get(req.params.id, req.params.id, req.params.id, req.params.id, req.params.id, req.params.id);
+    
+    res.json({
+      orders,
+      bets,
+      pnl: {
+        total_won: pnlResult.total_won,
+        total_lost: pnlResult.total_lost,
+        net: pnlResult.total_won - pnlResult.total_lost
+      }
+    });
+  } catch (err) {
+    console.error('Failed to get user activity:', err);
+    res.status(500).json({ error: 'Failed to get activity', message: err.message });
+  }
+});
+
+// Get admin audit log for a user (admin)
+app.get('/api/admin/users/:id/audit-log', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const logs = db.prepare(`
+      SELECT a.*, admin.username as admin_username, admin.email as admin_email
+      FROM admin_audit_log a
+      JOIN users admin ON a.admin_user_id = admin.id
+      WHERE a.target_user_id = ?
+      ORDER BY a.created_at DESC
+      LIMIT 100
+    `).all(req.params.id);
+    
+    res.json(logs);
+  } catch (err) {
+    console.error('Failed to get audit log:', err);
+    res.status(500).json({ error: 'Failed to get audit log', message: err.message });
+  }
+});
+
+// Adjust user balance (admin)
+app.post('/api/admin/users/:id/balance', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const { amount_sats, reason } = req.body;
+    
+    if (typeof amount_sats !== 'number') {
+      return res.status(400).json({ error: 'amount_sats must be a number' });
+    }
+    
+    if (!reason || reason.length < 5) {
+      return res.status(400).json({ error: 'A reason is required (min 5 characters)' });
+    }
+    
+    const user = db.prepare('SELECT id, balance_sats FROM users WHERE id = ?').get(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const newBalance = user.balance_sats + amount_sats;
+    if (newBalance < 0) {
+      return res.status(400).json({ error: 'Balance cannot go negative', current: user.balance_sats });
+    }
+    
+    // Update balance
+    db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, req.params.id);
+    
+    // Record transaction
+    const txType = amount_sats > 0 ? 'deposit' : 'withdrawal';
+    db.prepare(`
+      INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, reference_id, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'completed')
+    `).run(uuidv4(), req.params.id, txType, amount_sats, newBalance, `admin-adjust-${req.user.id}`);
+    
+    // Record audit log
+    recordAdminAction(req.user.id, req.params.id, 'balance_adjust', reason, 
+      String(user.balance_sats), String(newBalance));
+    
+    res.json({
+      success: true,
+      old_balance: user.balance_sats,
+      new_balance: newBalance,
+      adjustment: amount_sats
+    });
+  } catch (err) {
+    console.error('Failed to adjust balance:', err);
+    res.status(500).json({ error: 'Failed to adjust balance', message: err.message });
+  }
+});
+
+// Toggle admin status (admin)
+app.post('/api/admin/users/:id/toggle-admin', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    // Prevent removing own admin status
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ error: 'Cannot modify your own admin status' });
+    }
+    
+    const user = db.prepare('SELECT id, is_admin, username FROM users WHERE id = ?').get(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const newAdminStatus = user.is_admin ? 0 : 1;
+    db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(newAdminStatus, req.params.id);
+    
+    // Record audit log
+    recordAdminAction(req.user.id, req.params.id, 'toggle_admin', 
+      `${newAdminStatus ? 'Granted' : 'Revoked'} admin access`,
+      String(user.is_admin), String(newAdminStatus));
+    
+    res.json({
+      success: true,
+      is_admin: newAdminStatus,
+      message: `Admin status ${newAdminStatus ? 'granted' : 'revoked'} for ${user.username}`
+    });
+  } catch (err) {
+    console.error('Failed to toggle admin:', err);
+    res.status(500).json({ error: 'Failed to toggle admin', message: err.message });
+  }
+});
+
+// Disable/Enable user account (admin)
+app.post('/api/admin/users/:id/toggle-disabled', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const { reason } = req.body;
+    
+    // Prevent disabling own account
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ error: 'Cannot disable your own account' });
+    }
+    
+    const user = db.prepare('SELECT id, is_disabled, username FROM users WHERE id = ?').get(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const newDisabledStatus = user.is_disabled ? 0 : 1;
+    db.prepare('UPDATE users SET is_disabled = ? WHERE id = ?').run(newDisabledStatus, req.params.id);
+    
+    // Record audit log
+    const action = newDisabledStatus ? 'disable_account' : 'enable_account';
+    recordAdminAction(req.user.id, req.params.id, action, 
+      reason || `Account ${newDisabledStatus ? 'disabled' : 'enabled'}`,
+      String(user.is_disabled), String(newDisabledStatus));
+    
+    res.json({
+      success: true,
+      is_disabled: newDisabledStatus,
+      message: `Account ${newDisabledStatus ? 'disabled' : 'enabled'} for ${user.username}`
+    });
+  } catch (err) {
+    console.error('Failed to toggle disabled:', err);
+    res.status(500).json({ error: 'Failed to toggle account status', message: err.message });
+  }
+});
+
+// Force password reset (admin)
+app.post('/api/admin/users/:id/force-password-reset', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { new_password } = req.body;
+    
+    if (!new_password || new_password.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+    
+    const user = db.prepare('SELECT id, username, email FROM users WHERE id = ?').get(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const password_hash = await bcrypt.hash(new_password, salt);
+    
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(password_hash, req.params.id);
+    
+    // Record audit log
+    recordAdminAction(req.user.id, req.params.id, 'force_password_reset', 
+      'Password was reset by admin', null, null);
+    
+    res.json({
+      success: true,
+      message: `Password reset for ${user.username || user.email}`
+    });
+  } catch (err) {
+    console.error('Failed to reset password:', err);
+    res.status(500).json({ error: 'Failed to reset password', message: err.message });
+  }
+});
+
+// Add manual note to user (admin)
+app.post('/api/admin/users/:id/note', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const { note } = req.body;
+    
+    if (!note || note.length < 3) {
+      return res.status(400).json({ error: 'Note must be at least 3 characters' });
+    }
+    
+    const user = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Record in audit log as a note
+    recordAdminAction(req.user.id, req.params.id, 'manual_note', note, null, null);
+    
+    res.json({ success: true, message: 'Note added' });
+  } catch (err) {
+    console.error('Failed to add note:', err);
+    res.status(500).json({ error: 'Failed to add note', message: err.message });
+  }
+});
+
+// Get global admin stats (admin)
+app.get('/api/admin/stats', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const stats = db.prepare(`
+      SELECT 
+        (SELECT COUNT(*) FROM users) as total_users,
+        (SELECT COUNT(*) FROM users WHERE is_admin = 1) as admin_users,
+        (SELECT COUNT(*) FROM users WHERE is_disabled = 1) as disabled_users,
+        (SELECT COUNT(*) FROM users WHERE last_login_at > datetime('now', '-24 hours')) as active_24h,
+        (SELECT COUNT(*) FROM users WHERE last_login_at > datetime('now', '-7 days')) as active_7d,
+        (SELECT COALESCE(SUM(balance_sats), 0) FROM users) as total_user_balances,
+        (SELECT COALESCE(SUM(amount_sats), 0) FROM transactions WHERE type = 'deposit' AND status = 'completed') as total_deposits,
+        (SELECT COALESCE(SUM(ABS(amount_sats)), 0) FROM transactions WHERE type = 'withdrawal' AND status = 'completed') as total_withdrawals,
+        (SELECT COUNT(*) FROM orders WHERE status IN ('open', 'partial')) as open_orders,
+        (SELECT COUNT(*) FROM bets WHERE status = 'active') as active_bets,
+        (SELECT COUNT(*) FROM pending_withdrawals WHERE status = 'pending') as pending_ln_withdrawals,
+        (SELECT COUNT(*) FROM onchain_withdrawals WHERE status = 'pending') as pending_onchain_withdrawals
+    `).get();
+    
+    res.json(stats);
+  } catch (err) {
+    console.error('Failed to get admin stats:', err);
+    res.status(500).json({ error: 'Failed to get stats', message: err.message });
   }
 });
 

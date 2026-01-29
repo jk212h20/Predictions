@@ -507,6 +507,22 @@ label {
   border-radius: var(--radius-lg);
   margin-bottom: 1.25rem;
   box-shadow: 0 4px 20px rgba(247, 147, 26, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.qr-wrapper.qr-small {
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+  margin-bottom: 0.75rem;
+}
+
+.qr-wrapper.qr-small svg {
+  background: white;
+  padding: 0.5rem;
+  border-radius: var(--radius-sm);
 }
 
 .lightning-qr {
@@ -4852,6 +4868,20 @@ tr.status-lost {
   gap: 1rem;
 }
 
+.onchain-deposit-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: center;
+}
+
+.onchain-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
 .address-display {
   display: flex;
   align-items: center;
@@ -4862,15 +4892,16 @@ tr.status-lost {
 
 .btc-address {
   font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   color: var(--accent);
   background: var(--bg-input);
   padding: 0.5rem 0.75rem;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  word-break: break-all;
-  max-width: 300px;
-  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .onchain-deposits-list {
@@ -5075,6 +5106,547 @@ tr.status-lost {
 
 .trade-shares {
   color: var(--text-bright);
+}
+
+/* ==================== USER ADMIN PANEL ==================== */
+.btn-users {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+  border: none;
+}
+
+.btn-users:hover {
+  background: linear-gradient(135deg, #34d399, #10b981);
+}
+
+.modal-user-admin {
+  max-width: 1200px;
+  width: 95%;
+  max-height: 90vh;
+  position: relative;
+}
+
+.modal-close-btn {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  z-index: 10;
+}
+
+.user-admin {
+  padding: 0;
+}
+
+.user-admin h2 {
+  margin-bottom: 1rem;
+}
+
+/* Stats Grid */
+.user-admin .stats-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.user-admin .stat-card {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  text-align: center;
+}
+
+.user-admin .stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.user-admin .stat-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-top: 0.25rem;
+}
+
+/* User Admin Layout */
+.user-admin-layout {
+  display: grid;
+  grid-template-columns: 1fr 400px;
+  gap: 1.5rem;
+  height: calc(70vh - 150px);
+  min-height: 400px;
+}
+
+.user-list-panel {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.user-details-panel {
+  overflow-y: auto;
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+}
+
+/* User List */
+.user-list-section {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.user-list-header {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.user-list-header .search-input {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.user-count {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.user-table-container {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.user-table {
+  width: 100%;
+  font-size: 0.8125rem;
+  border-collapse: collapse;
+}
+
+.user-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  padding: 0.75rem 0.5rem;
+  text-align: left;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+
+.user-table th.sortable {
+  cursor: pointer;
+}
+
+.user-table th.sortable:hover {
+  color: var(--text);
+}
+
+.user-table td {
+  padding: 0.625rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.user-table tbody tr {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.user-table tbody tr:hover {
+  background: var(--bg-card-hover);
+}
+
+.user-table tbody tr.selected {
+  background: rgba(247, 147, 26, 0.1);
+}
+
+.user-table tbody tr.disabled-user {
+  opacity: 0.6;
+}
+
+.user-table .balance {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.user-table .badge {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 10px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  margin-left: 0.375rem;
+}
+
+.user-table .badge.admin {
+  background: rgba(99, 102, 241, 0.2);
+  color: #818cf8;
+}
+
+.user-table .badge.active {
+  background: var(--yes-bg);
+  color: var(--yes-color);
+}
+
+.user-table .badge.disabled {
+  background: var(--no-bg);
+  color: var(--no-color);
+}
+
+/* Pagination */
+.user-admin .pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 0;
+  margin-top: 0.5rem;
+}
+
+.user-admin .pagination button {
+  padding: 0.5rem 1rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+
+.user-admin .pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.user-admin .pagination span {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+/* User Details Panel */
+.user-details-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+}
+
+.user-details {
+  padding: 1.25rem;
+}
+
+.user-details-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.user-details-header h3 {
+  font-size: 1.25rem;
+  color: var(--text-bright);
+  margin: 0;
+}
+
+.account-number {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+/* Detail Tabs */
+.detail-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+
+.detail-tabs button {
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+.detail-tabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.detail-tabs button:hover:not(.active) {
+  color: var(--text);
+}
+
+/* Detail Content */
+.detail-content {
+  min-height: 200px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.detail-item {
+  padding: 0.625rem 0.75rem;
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+}
+
+.detail-item label {
+  display: block;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+}
+
+.detail-item span {
+  font-size: 0.875rem;
+  color: var(--text-bright);
+}
+
+.detail-item span.positive {
+  color: var(--yes-color);
+}
+
+.detail-item span.negative {
+  color: var(--no-color);
+}
+
+/* Action Buttons */
+.user-details .action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.user-details .action-btn {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.user-details .action-btn:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-hover);
+}
+
+.user-details .action-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #000;
+}
+
+.user-details .action-btn.danger {
+  background: var(--no-bg);
+  border-color: var(--no-color);
+  color: var(--no-color);
+}
+
+.user-details .action-btn.success {
+  background: var(--yes-bg);
+  border-color: var(--yes-color);
+  color: var(--yes-color);
+}
+
+/* Mini Tables */
+.user-details .mini-table {
+  width: 100%;
+  font-size: 0.75rem;
+}
+
+.user-details .mini-table th {
+  background: var(--bg-card);
+  padding: 0.5rem 0.375rem;
+  font-size: 0.625rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.user-details .mini-table td {
+  padding: 0.5rem 0.375rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.user-details .mini-table .truncate {
+  max-width: 150px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-details .mini-table .badge {
+  padding: 0.125rem 0.375rem;
+  font-size: 0.5625rem;
+}
+
+/* P&L Summary */
+.pnl-summary {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.pnl-item {
+  flex: 1;
+  padding: 0.75rem;
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+
+.pnl-item span:first-child {
+  display: block;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+}
+
+.pnl-item span:last-child {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.pnl-item.positive span:last-child {
+  color: var(--yes-color);
+}
+
+.pnl-item.negative span:last-child {
+  color: var(--no-color);
+}
+
+/* Error Banner */
+.error-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: var(--no-bg);
+  border: 1px solid var(--no-color);
+  border-radius: var(--radius-sm);
+  color: var(--no-color);
+  margin-bottom: 1rem;
+}
+
+.error-banner button {
+  background: transparent;
+  border: none;
+  color: var(--no-color);
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Modal Form Styles */
+.user-admin .form-group {
+  margin-bottom: 1rem;
+}
+
+.user-admin .form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text);
+}
+
+.user-admin .form-group textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.user-admin .modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+
+.user-admin .warning {
+  color: var(--no-color);
+  font-weight: 500;
+}
+
+/* Responsive User Admin */
+@media (max-width: 1024px) {
+  .user-admin-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .user-list-panel {
+    max-height: 400px;
+  }
+
+  .user-details-panel {
+    max-height: 500px;
+  }
+}
+
+@media (max-width: 768px) {
+  .user-admin .stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  .detail-tabs button {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 480px) {
+  .user-admin .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .user-admin .stat-value {
+    font-size: 1.25rem;
+  }
 }
 
 /* ==================== RECONCILIATION PANEL ==================== */
@@ -5403,6 +5975,284 @@ tr.status-lost {
   .match-stat {
     flex-shrink: 0;
     white-space: nowrap;
+  }
+}
+
+/* ==================== IMPROVED WITHDRAWAL APPROVAL PANEL ==================== */
+.withdrawal-balance-grid {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.balance-box {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  min-width: 180px;
+}
+
+.balance-box.lightning {
+  border-color: var(--accent);
+  background: rgba(247, 147, 26, 0.05);
+}
+
+.balance-box.onchain {
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.balance-box.mock {
+  background: rgba(210, 153, 34, 0.1);
+  border-color: #d29922;
+  color: #d29922;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.balance-box .balance-icon {
+  font-size: 1.5rem;
+}
+
+.balance-box .balance-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.balance-box .balance-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.balance-box .balance-values {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.875rem;
+}
+
+.balance-box .balance-values .outbound {
+  color: var(--yes-color);
+  font-weight: 600;
+}
+
+.balance-box .balance-values .inbound {
+  color: var(--text-muted);
+}
+
+.balance-box .balance-value {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+/* Compact Withdrawal List */
+.withdrawals-list-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.withdrawal-row {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.withdrawal-row:hover {
+  border-color: var(--border-hover);
+}
+
+.withdrawal-row.expanded {
+  border-color: var(--accent);
+}
+
+.withdrawal-row.low-liquidity {
+  border-color: #d29922;
+}
+
+.withdrawal-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.withdrawal-summary:hover {
+  background: var(--bg-card-hover);
+}
+
+.w-type {
+  font-size: 1.25rem;
+  width: 30px;
+  text-align: center;
+}
+
+.w-user {
+  flex: 1;
+  font-weight: 600;
+  color: var(--text-bright);
+  font-size: 1rem;
+}
+
+.w-amount {
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 1.0625rem;
+  margin-right: 0.5rem;
+}
+
+.w-expand {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  width: 20px;
+  text-align: center;
+}
+
+.w-actions {
+  display: flex;
+  gap: 0.375rem;
+}
+
+.btn.btn-sm {
+  padding: 0.375rem 0.625rem;
+  font-size: 0.8125rem;
+  min-height: 32px;
+  min-width: 32px;
+}
+
+.btn.btn-sm.btn-approve {
+  background: var(--yes-color);
+  color: white;
+  border: none;
+}
+
+.btn.btn-sm.btn-approve:hover {
+  background: var(--yes-hover);
+}
+
+.btn.btn-sm.btn-approve:disabled {
+  background: var(--yes-bg);
+  color: var(--yes-color);
+  opacity: 0.6;
+}
+
+.btn.btn-sm.btn-reject {
+  background: var(--no-bg);
+  color: var(--no-color);
+  border: 1px solid var(--no-color);
+}
+
+.btn.btn-sm.btn-reject:hover {
+  background: var(--no-color);
+  color: white;
+}
+
+/* Expanded Details */
+.withdrawal-expanded {
+  padding: 0 1rem 1rem 3rem;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+}
+
+.w-detail {
+  padding: 0.5rem 0;
+  font-size: 0.8125rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.w-detail:last-of-type {
+  border-bottom: none;
+}
+
+.w-detail label {
+  color: var(--text-muted);
+  margin-right: 0.5rem;
+  display: inline;
+  font-size: 0.8125rem;
+}
+
+.w-detail code {
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--radius-sm);
+  display: block;
+  margin-top: 0.375rem;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.w-detail.invoice code,
+.w-detail.address code {
+  max-height: 60px;
+  overflow-y: auto;
+}
+
+.w-warning {
+  background: rgba(210, 153, 34, 0.15);
+  border: 1px solid rgba(210, 153, 34, 0.3);
+  color: #d29922;
+  padding: 0.625rem 0.875rem;
+  border-radius: var(--radius-sm);
+  margin-top: 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+/* Responsive Withdrawal Panel */
+@media (max-width: 768px) {
+  .withdrawal-balance-grid {
+    flex-direction: column;
+  }
+
+  .balance-box {
+    min-width: auto;
+    width: 100%;
+  }
+
+  .withdrawal-summary {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .w-user {
+    order: 1;
+    flex: 0 0 calc(100% - 80px);
+  }
+
+  .w-type {
+    order: 0;
+  }
+
+  .w-expand {
+    order: 2;
+  }
+
+  .w-amount {
+    order: 3;
+    flex: 1;
+  }
+
+  .w-actions {
+    order: 4;
+  }
+
+  .withdrawal-expanded {
+    padding-left: 1rem;
   }
 }
 

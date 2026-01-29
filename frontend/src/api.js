@@ -573,3 +573,103 @@ export const matchOnchainDeposits = () =>
 // Match on-chain withdrawals: database vs node
 export const matchOnchainWithdrawals = () =>
   fetch(`${API_BASE}/admin/reconciliation/match/onchain-withdrawals`, { headers: getHeaders() }).then(handleResponse);
+
+// ==================== ADMIN USER MANAGEMENT ====================
+
+// Get admin stats
+export const getAdminStats = () =>
+  fetch(`${API_BASE}/admin/stats`, { headers: getHeaders() }).then(handleResponse);
+
+// Get all users (paginated, searchable)
+export const getAdminUsers = (params = {}) => {
+  const queryParams = new URLSearchParams();
+  if (params.search) queryParams.append('search', params.search);
+  if (params.sort) queryParams.append('sort', params.sort);
+  if (params.order) queryParams.append('order', params.order);
+  if (params.limit) queryParams.append('limit', params.limit);
+  if (params.offset) queryParams.append('offset', params.offset);
+  const queryString = queryParams.toString();
+  return fetch(`${API_BASE}/admin/users${queryString ? '?' + queryString : ''}`, { 
+    headers: getHeaders() 
+  }).then(handleResponse);
+};
+
+// Get single user details
+export const getAdminUser = (userId) =>
+  fetch(`${API_BASE}/admin/users/${userId}`, { headers: getHeaders() }).then(handleResponse);
+
+// Get user's transaction history (admin)
+export const getAdminUserTransactions = (userId, params = {}) => {
+  const queryParams = new URLSearchParams();
+  if (params.limit) queryParams.append('limit', params.limit);
+  if (params.offset) queryParams.append('offset', params.offset);
+  if (params.type) queryParams.append('type', params.type);
+  const queryString = queryParams.toString();
+  return fetch(`${API_BASE}/admin/users/${userId}/transactions${queryString ? '?' + queryString : ''}`, { 
+    headers: getHeaders() 
+  }).then(handleResponse);
+};
+
+// Get user's login history (admin)
+export const getAdminUserLogins = (userId, params = {}) => {
+  const queryParams = new URLSearchParams();
+  if (params.limit) queryParams.append('limit', params.limit);
+  if (params.offset) queryParams.append('offset', params.offset);
+  const queryString = queryParams.toString();
+  return fetch(`${API_BASE}/admin/users/${userId}/logins${queryString ? '?' + queryString : ''}`, { 
+    headers: getHeaders() 
+  }).then(handleResponse);
+};
+
+// Get user's trading activity (admin)
+export const getAdminUserActivity = (userId, params = {}) => {
+  const queryParams = new URLSearchParams();
+  if (params.limit) queryParams.append('limit', params.limit);
+  const queryString = queryParams.toString();
+  return fetch(`${API_BASE}/admin/users/${userId}/activity${queryString ? '?' + queryString : ''}`, { 
+    headers: getHeaders() 
+  }).then(handleResponse);
+};
+
+// Get admin audit log for user
+export const getAdminUserAuditLog = (userId) =>
+  fetch(`${API_BASE}/admin/users/${userId}/audit-log`, { headers: getHeaders() }).then(handleResponse);
+
+// Adjust user balance (admin)
+export const adjustUserBalance = (userId, amount_sats, reason) =>
+  fetch(`${API_BASE}/admin/users/${userId}/balance`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ amount_sats, reason }),
+  }).then(handleResponse);
+
+// Toggle admin status
+export const toggleUserAdmin = (userId) =>
+  fetch(`${API_BASE}/admin/users/${userId}/toggle-admin`, {
+    method: 'POST',
+    headers: getHeaders(),
+  }).then(handleResponse);
+
+// Toggle disabled status
+export const toggleUserDisabled = (userId, reason) =>
+  fetch(`${API_BASE}/admin/users/${userId}/toggle-disabled`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ reason }),
+  }).then(handleResponse);
+
+// Force password reset
+export const forcePasswordReset = (userId, new_password) =>
+  fetch(`${API_BASE}/admin/users/${userId}/force-password-reset`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ new_password }),
+  }).then(handleResponse);
+
+// Add manual note to user
+export const addUserNote = (userId, note) =>
+  fetch(`${API_BASE}/admin/users/${userId}/note`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ note }),
+  }).then(handleResponse);

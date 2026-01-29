@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import * as api from './api';
 import BotAdmin from './BotAdmin';
+import UserAdmin from './UserAdmin';
 import './App.css';
 
 // Constants
@@ -90,7 +91,7 @@ function useAuth() {
 
 // ==================== COMPONENTS ====================
 
-function Header({ user, onLogout, onShowWallet, onShowPortfolio, onShowProfile, onShowAdmin, onShowBotAdmin, onShowLogin }) {
+function Header({ user, onLogout, onShowWallet, onShowPortfolio, onShowProfile, onShowAdmin, onShowBotAdmin, onShowUserAdmin, onShowLogin }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleMobileAction = (action) => {
@@ -119,6 +120,7 @@ function Header({ user, onLogout, onShowWallet, onShowPortfolio, onShowProfile, 
             {user.is_admin === 1 && (
               <>
                 <button className="btn btn-small btn-bot" onClick={onShowBotAdmin}>🤖 Bot</button>
+                <button className="btn btn-small btn-users" onClick={onShowUserAdmin}>👥 Users</button>
                 <button className="btn btn-small" onClick={onShowAdmin}>Admin</button>
               </>
             )}
@@ -2647,6 +2649,7 @@ function App() {
   const [showProfile, setShowProfile] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showBotAdmin, setShowBotAdmin] = useState(false);
+  const [showUserAdmin, setShowUserAdmin] = useState(false);
   const [showWhatsThePoint, setShowWhatsThePoint] = useState(false);
   const [eventMarket, setEventMarket] = useState(null);
   const [grandmasters, setGrandmasters] = useState([]);
@@ -2710,6 +2713,7 @@ function App() {
         onShowProfile={() => setShowProfile(true)}
         onShowAdmin={() => setShowAdmin(true)}
         onShowBotAdmin={() => setShowBotAdmin(true)}
+        onShowUserAdmin={() => setShowUserAdmin(true)}
         onShowLogin={() => setShowLogin(true)}
       />
 
@@ -2800,6 +2804,15 @@ function App() {
 
       {showBotAdmin && user?.is_admin === 1 && (
         <BotAdmin onClose={() => setShowBotAdmin(false)} />
+      )}
+
+      {showUserAdmin && user?.is_admin === 1 && (
+        <div className="modal-overlay" onClick={() => setShowUserAdmin(false)}>
+          <div className="modal modal-fullscreen modal-user-admin" onClick={e => e.stopPropagation()}>
+            <button className="btn btn-outline modal-close-btn" onClick={() => setShowUserAdmin(false)}>×</button>
+            <UserAdmin />
+          </div>
+        </div>
       )}
     </div>
   );
