@@ -1461,41 +1461,51 @@ export default function BotAdmin({ onClose }) {
           {/* WITHDRAWALS TAB */}
           {activeTab === 'withdrawals' && (
             <div className="bot-withdrawals">
-              <h3>💸 Pending Withdrawals</h3>
+              <h3>💸 All Pending Withdrawals ({pendingWithdrawals.length + pendingOnchainWithdrawals.length})</h3>
               
-              {/* Channel Balance Info */}
-              {channelBalance && (
-                <div className="channel-balance-info">
+              {/* Balance Overview */}
+              <div className="channel-balance-info">
+                {channelBalance && (
+                  <>
+                    <div className="balance-stat">
+                      <label>⚡ Lightning Outbound</label>
+                      <value>{formatSats(channelBalance.outbound_sats)} sats</value>
+                    </div>
+                    <div className="balance-stat">
+                      <label>⚡ Lightning Inbound</label>
+                      <value>{formatSats(channelBalance.inbound_sats)} sats</value>
+                    </div>
+                    {!channelBalance.is_real && (
+                      <div className="mock-warning">⚠️ Mock Mode - No real Lightning</div>
+                    )}
+                  </>
+                )}
+                {onchainBalance && (
                   <div className="balance-stat">
-                    <label>Outbound Liquidity</label>
-                    <value>{formatSats(channelBalance.outbound_sats)} sats</value>
+                    <label>⛓️ On-Chain Balance</label>
+                    <value>{formatSats(onchainBalance.balance_sats)} sats</value>
                   </div>
-                  <div className="balance-stat">
-                    <label>Inbound Liquidity</label>
-                    <value>{formatSats(channelBalance.inbound_sats)} sats</value>
-                  </div>
-                  {!channelBalance.is_real && (
-                    <div className="mock-warning">⚠️ Mock Mode - No real Lightning</div>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
               
               {loadingWithdrawals ? (
                 <div className="loading">Loading withdrawals...</div>
-              ) : pendingWithdrawals.length === 0 ? (
+              ) : (pendingWithdrawals.length === 0 && pendingOnchainWithdrawals.length === 0) ? (
                 <div className="empty-state">
                   <p>✅ No pending withdrawals</p>
                 </div>
               ) : (
                 <div className="withdrawals-list">
+                  {/* LIGHTNING WITHDRAWALS */}
                   {pendingWithdrawals.map(pw => (
-                    <div key={pw.id} className="withdrawal-card">
+                    <div key={`ln-${pw.id}`} className="withdrawal-card lightning">
                       <div className="withdrawal-header">
+                        <span className="withdrawal-type-badge lightning">⚡ Lightning</span>
                         <span className="withdrawal-user">{pw.username || pw.email || 'Unknown User'}</span>
                         <span className="withdrawal-amount">{formatSats(pw.amount_sats)} sats</span>
                       </div>
                       <div className="withdrawal-details">
-                        <div><label>User Deposits:</label> {formatSats(pw.user_total_deposits)} sats</div>
+                        <div><label>User Total Deposits:</label> {formatSats(pw.user_total_deposits)} sats</div>
                         <div><label>Requested:</label> {new Date(pw.created_at).toLocaleString()}</div>
                         <div className="invoice-preview">
                           <label>Invoice:</label> 
@@ -1506,7 +1516,7 @@ export default function BotAdmin({ onClose }) {
                         <button 
                           className="btn btn-success"
                           onClick={async () => {
-                            if (!confirm(`Approve withdrawal of ${formatSats(pw.amount_sats)} sats to ${pw.username || pw.email}?`)) return;
+                            if (!confirm(`Approve Lightning withdrawal of ${formatSats(pw.amount_sats)} sats to ${pw.username || pw.email}?`)) return;
                             setProcessingWithdrawal(pw.id);
                             try {
                               const result = await api.approveWithdrawal(pw.id);
@@ -1531,12 +1541,11 @@ export default function BotAdmin({ onClose }) {
                           className="btn btn-danger"
                           onClick={async () => {
                             const reason = prompt('Reason for rejection (optional):');
-                            if (reason === null) return; // cancelled
+                            if (reason === null) return;
                             setProcessingWithdrawal(pw.id);
                             try {
                               await api.rejectWithdrawal(pw.id, reason || 'Rejected by admin');
                               alert('Withdrawal rejected. Funds returned to user.');
-                              // Refresh list
                               const withdrawals = await api.getAdminPendingWithdrawals();
                               setPendingWithdrawals(withdrawals || []);
                             } catch (err) {
@@ -1556,33 +1565,14 @@ export default function BotAdmin({ onClose }) {
                       )}
                     </div>
                   ))}
-                </div>
-              )}
-              
-              {/* ON-CHAIN WITHDRAWALS SECTION */}
-              <h3 style={{ marginTop: '2rem' }}>⛓️ On-Chain Withdrawals</h3>
-              
-              {onchainBalance && (
-                <div className="channel-balance-info">
-                  <div className="balance-stat">
-                    <label>On-Chain Balance</label>
-                    <value>{formatSats(onchainBalance.balance_sats)} sats</value>
-                  </div>
-                </div>
-              )}
-              
-              {pendingOnchainWithdrawals.length === 0 ? (
-                <div className="empty-state">
-                  <p>✅ No pending on-chain withdrawals</p>
-                </div>
-              ) : (
-                <div className="withdrawals-list">
+                  
+                  {/* ON-CHAIN WITHDRAWALS */}
                   {pendingOnchainWithdrawals.map(pw => (
-                    <div key={pw.id} className="withdrawal-card onchain">
+                    <div key={`oc-${pw.id}`} className="withdrawal-card onchain">
                       <div className="withdrawal-header">
+                        <span className="withdrawal-type-badge onchain">⛓️ On-Chain</span>
                         <span className="withdrawal-user">{pw.username || pw.email || 'Unknown User'}</span>
                         <span className="withdrawal-amount">{formatSats(pw.amount_sats)} sats</span>
-                        <span className="withdrawal-type">⛓️ On-Chain</span>
                       </div>
                       <div className="withdrawal-details">
                         <div><label>User On-Chain Deposits:</label> {formatSats(pw.user_total_onchain_deposits)} sats</div>
@@ -1590,7 +1580,7 @@ export default function BotAdmin({ onClose }) {
                         <div><label>Fee Paid By:</label> {pw.user_pays_fee ? 'User' : 'Platform (free withdrawal)'}</div>
                         <div className="address-preview">
                           <label>Address:</label> 
-                          <code>{pw.dest_address?.substring(0, 30)}...</code>
+                          <code>{pw.dest_address}</code>
                         </div>
                       </div>
                       <div className="withdrawal-actions">
@@ -1602,7 +1592,6 @@ export default function BotAdmin({ onClose }) {
                             try {
                               const result = await api.approveOnchainWithdrawal(pw.id);
                               alert(`✅ On-chain withdrawal approved! TXID: ${result.txid?.substring(0, 20)}...`);
-                              // Refresh list
                               const [onchainWithdrawals, onchainBal] = await Promise.all([
                                 api.getAdminOnchainPendingWithdrawals(),
                                 api.getOnchainBalance().catch(() => null)
@@ -1622,12 +1611,11 @@ export default function BotAdmin({ onClose }) {
                           className="btn btn-danger"
                           onClick={async () => {
                             const reason = prompt('Reason for rejection (optional):');
-                            if (reason === null) return; // cancelled
+                            if (reason === null) return;
                             setProcessingWithdrawal(pw.id);
                             try {
                               await api.rejectOnchainWithdrawal(pw.id, reason || 'Rejected by admin');
                               alert('On-chain withdrawal rejected. Funds returned to user.');
-                              // Refresh list
                               const onchainWithdrawals = await api.getAdminOnchainPendingWithdrawals();
                               setPendingOnchainWithdrawals(onchainWithdrawals || []);
                             } catch (err) {
