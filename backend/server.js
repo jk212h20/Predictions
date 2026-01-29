@@ -30,6 +30,16 @@ if (gmCount.count === 0) {
   seed();
 }
 
+// Always run CSV-based player seeder on startup to add new players
+console.log('Running player seeder from CSV...');
+try {
+  seedPlayers();
+  const newCount = db.prepare('SELECT COUNT(*) as count FROM grandmasters').get();
+  console.log(`Player seeding complete. Total players: ${newCount.count}`);
+} catch (err) {
+  console.error('Player seeding error (non-fatal):', err.message);
+}
+
 // ==================== AUTH MIDDLEWARE ====================
 function authMiddleware(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
