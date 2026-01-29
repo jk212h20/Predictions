@@ -1023,6 +1023,28 @@ app.get('/api/markets/:id', (req, res) => {
 
 // ==================== ORDER ROUTES ====================
 
+/*
+ * ==================== ORDER MATCHING SYSTEM ====================
+ * 
+ * SHARE MODEL:
+ * - 1 share = 1000 sats payout if the prediction is correct
+ * - price_cents represents probability (1-99 = 1%-99%)
+ * - YES share at 60% costs 600 sats, pays 1000 sats if YES wins
+ * - NO share at 40% costs 400 sats, pays 1000 sats if NO wins
+ * - Complementary orders (YES@60 + NO@40 = 100%) match perfectly
+ * 
+ * MATCHING LOGIC:
+ * - YES order at price Y matches with NO orders where NO_price >= (100 - Y)
+ * - NO order at price N matches with YES orders where YES_price >= (100 - N)
+ * - Trade executes at the RESTING order's price (price-time priority)
+ * - Best prices matched first (highest NO for YES takers, lowest YES for NO takers)
+ * 
+ * EXAMPLE:
+ * - Resting: NO @ 45% (they paid 450 sats/share)
+ * - Incoming: YES @ 60% (willing to pay up to 600 sats/share)
+ * - Match! Trade at 55% YES / 45% NO (resting order's terms)
+ * - YES buyer pays 550 sats/share (better than their 600 limit)
+ */
 app.post('/api/orders', authMiddleware, (req, res) => {
   const { market_id, side, price_cents, amount_sats } = req.body;
   
@@ -1031,7 +1053,7 @@ app.post('/api/orders', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'Side must be yes or no' });
   }
   if (price_cents < 1 || price_cents > 99) {
-    return res.status(400).json({ error: 'Price must be between 1 and 99 cents' });
+    return res.status(400).json({ error: 'Probability must be between 1% and 99%' });
   }
   if (amount_sats < 100) {
     return res.status(400).json({ error: 'Minimum order is 100 sats' });
@@ -1063,18 +1085,19 @@ app.post('/api/orders', authMiddleware, (req, res) => {
   const matchedBets = [];
   
   // Find matching orders on opposite side
+  // For YES order at Y%: match with NO orders where NO_price >= (100 - Y)
+  // For NO order at N%: match with YES orders where YES_price >= (100 - N)
   const oppositeSide = side === 'yes' ? 'no' : 'yes';
-  const matchCondition = side === 'yes' 
-    ? 'price_cents <= ?' // YES buyer matches with NO seller at complementary price
-    : 'price_cents >= ?';
-  const matchPrice = side === 'yes' ? (100 - price_cents) : (100 - price_cents);
+  const minComplementPrice = 100 - price_cents;
   
+  // YES taker wants highest NO prices first (best for taker = lowest effective YES price)
+  // NO taker wants highest YES prices first (best for taker = lowest effective NO price)
   const matchingOrders = db.prepare(`
     SELECT * FROM orders
     WHERE market_id = ? AND side = ? AND status IN ('open', 'partial')
-    AND ${side === 'yes' ? 'price_cents <= ?' : 'price_cents >= ?'}
-    ORDER BY ${side === 'yes' ? 'price_cents ASC' : 'price_cents DESC'}, created_at ASC
-  `).all(market_id, oppositeSide, matchPrice);
+    AND price_cents >= ?
+    ORDER BY price_cents DESC, created_at ASC
+  `).all(market_id, oppositeSide, minComplementPrice);
   
   // Track if we matched with any bot orders (for atomic pullback)
   let matchedBotOrders = false;
@@ -2174,7 +2197,7 @@ app.get('/api/wallet/onchain/deposits', authMiddleware, (req, res) => {
   res.json(deposits);
 });
 
-// Request on-chain withdrawal (all go to admin queue)
+// Request on-chain withdrawal (all go to admin queue) - ATOMIC TRANSACTION
 app.post('/api/wallet/onchain/withdraw', authMiddleware, async (req, res) => {
   const { address, amount_sats } = req.body;
   
@@ -2225,33 +2248,53 @@ app.post('/api/wallet/onchain/withdraw', authMiddleware, async (req, res) => {
   const freeWithdrawalsUsed = user.free_onchain_withdrawals_used || 0;
   const userPaysFee = freeWithdrawalsUsed >= FREE_ONCHAIN_WITHDRAWALS;
   
-  // Deduct balance (hold funds)
-  const newBalance = user.balance_sats - amount_sats;
-  db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, req.user.id);
-  
-  // Create withdrawal request
+  // ATOMIC: All or nothing - deduct balance, create withdrawal, record transaction
   const withdrawalId = uuidv4();
-  db.prepare(`
-    INSERT INTO onchain_withdrawals (id, user_id, amount_sats, dest_address, user_pays_fee, status)
-    VALUES (?, ?, ?, ?, ?, 'pending')
-  `).run(withdrawalId, req.user.id, amount_sats, address, userPaysFee ? 1 : 0);
+  const txId = uuidv4();
+  const newBalance = user.balance_sats - amount_sats;
   
-  // Record pending transaction
-  db.prepare(`
-    INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, reference_id, status)
-    VALUES (?, ?, 'withdrawal', ?, ?, ?, 'pending')
-  `).run(uuidv4(), req.user.id, -amount_sats, newBalance, withdrawalId);
-  
-  res.json({
-    success: true,
-    withdrawal_id: withdrawalId,
-    status: 'pending',
-    amount_sats,
-    address,
-    user_pays_fee: userPaysFee,
-    balance_sats: newBalance,
-    message: 'Withdrawal request submitted for admin approval.',
+  const createWithdrawal = db.transaction(() => {
+    // 1. Deduct balance
+    db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, req.user.id);
+    
+    // 2. Create withdrawal request
+    db.prepare(`
+      INSERT INTO onchain_withdrawals (id, user_id, amount_sats, dest_address, user_pays_fee, status)
+      VALUES (?, ?, ?, ?, ?, 'pending')
+    `).run(withdrawalId, req.user.id, amount_sats, address, userPaysFee ? 1 : 0);
+    
+    // 3. Record pending transaction
+    db.prepare(`
+      INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, reference_id, status)
+      VALUES (?, ?, 'withdrawal', ?, ?, ?, 'pending')
+    `).run(txId, req.user.id, -amount_sats, newBalance, withdrawalId);
+    
+    return { withdrawalId, newBalance };
   });
+  
+  try {
+    const result = createWithdrawal();
+    
+    console.log(`On-chain withdrawal created: ${result.withdrawalId} for ${amount_sats} sats to ${address}`);
+    
+    res.json({
+      success: true,
+      withdrawal_id: result.withdrawalId,
+      status: 'pending',
+      amount_sats,
+      address,
+      user_pays_fee: userPaysFee,
+      balance_sats: result.newBalance,
+      message: 'Withdrawal request submitted for admin approval.',
+    });
+  } catch (err) {
+    console.error('On-chain withdrawal FAILED (atomic rollback):', err);
+    res.status(500).json({ 
+      error: 'Failed to create withdrawal request', 
+      message: err.message,
+      details: 'Transaction rolled back - your balance was not affected.'
+    });
+  }
 });
 
 // Cancel pending on-chain withdrawal

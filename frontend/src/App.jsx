@@ -13,6 +13,21 @@ const formatSats = (sats) => {
   return sats.toLocaleString();
 };
 
+// Calculate number of shares from sats
+const satsToShares = (sats) => {
+  if (!sats) return 0;
+  return Math.floor(sats / SATS_PER_SHARE);
+};
+
+// Format shares with optional sats in parentheses
+const formatShares = (sats, showSats = false) => {
+  const shares = satsToShares(sats);
+  if (showSats) {
+    return `${shares.toLocaleString()} shares (${formatSats(sats)} sats)`;
+  }
+  return `${shares.toLocaleString()} share${shares !== 1 ? 's' : ''}`;
+};
+
 // ==================== AUTH CONTEXT ====================
 function useAuth() {
   const [user, setUser] = useState(null);
@@ -1529,6 +1544,8 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
   const cost = side === 'yes' 
     ? Math.ceil(totalPayout * price / 100)
     : Math.ceil(totalPayout * (100 - price) / 100);
+  const profit = totalPayout - cost;
+  const profitPercent = cost > 0 ? Math.round((profit / cost) * 100) : 0;
 
   const handleTrade = async () => {
     if (!user) {
@@ -1561,6 +1578,12 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
       
       <p className="market-description">{market.description}</p>
 
+      {/* Share Model Explainer */}
+      <div className="share-explainer">
+        <strong>💡 How shares work:</strong> Each share pays out <strong>{formatSats(SATS_PER_SHARE)} sats</strong> if your prediction is correct. 
+        Buying at lower probability = higher potential profit!
+      </div>
+
       <div className="market-content">
         {market.status === 'open' && (
           <div className="trade-panel">
@@ -1581,7 +1604,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
             
             <div className="trade-inputs">
               <label>
-                Probability
+                Your probability estimate
                 <input
                   type="range"
                   min="1"
@@ -1593,7 +1616,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               </label>
               
               <label>
-                Shares (each pays {formatSats(SATS_PER_SHARE)} sats if correct)
+                Number of shares
                 <input
                   type="number"
                   value={shares}
@@ -1604,48 +1627,75 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               </label>
             </div>
             
-            <div className="trade-summary">
-              <span>Cost: <strong>{formatSats(cost)} sats</strong></span>
-              <span>Payout if correct: <strong>{formatSats(totalPayout)} sats</strong></span>
+            <div className="trade-summary-detailed">
+              <div className="summary-row">
+                <span>You pay:</span>
+                <span className="summary-value cost">
+                  {side === 'yes' ? price : (100 - price)} sats/share × {shares} = <strong>{formatSats(cost)} sats</strong>
+                </span>
+              </div>
+              <div className="summary-row">
+                <span>If {side.toUpperCase()} wins:</span>
+                <span className="summary-value payout">
+                  {formatSats(SATS_PER_SHARE)} sats/share × {shares} = <strong>{formatSats(totalPayout)} sats</strong>
+                </span>
+              </div>
+              <div className="summary-row profit-row">
+                <span>Profit if correct:</span>
+                <span className="summary-value profit">
+                  <strong>+{formatSats(profit)} sats</strong> <span className="profit-percent">(+{profitPercent}%)</span>
+                </span>
+              </div>
             </div>
             
             <button 
               className={`btn btn-large ${side === 'yes' ? 'btn-yes' : 'btn-no'}`}
               onClick={handleTrade}
-              disabled={loading}
+              disabled={loading || shares < 1}
             >
-              {loading ? 'Placing...' : `Buy ${shares} ${side.toUpperCase()} @ ${price}%`}
+              {loading ? 'Placing...' : `Buy ${shares} ${side.toUpperCase()} share${shares !== 1 ? 's' : ''} @ ${price}%`}
             </button>
           </div>
         )}
 
         <div className="order-book">
           <h3>Order Book</h3>
+          <p className="ob-hint">Offers available to trade against. Click to match!</p>
           <div className="ob-container">
             <div className="ob-side ob-yes">
-              <h4>YES Bids</h4>
+              <h4>YES Offers</h4>
+              <div className="ob-header-row">
+                <span>Price</span>
+                <span>Shares</span>
+              </div>
               {market.orderBook?.yes.map((o, i) => (
                 <div key={i} className="ob-row">
                   <span className="ob-price">{o.price_cents}%</span>
-                  <span className="ob-amount">{formatSats(o.total_sats)} sats</span>
-                  <div className="ob-bar" style={{ width: `${Math.min(o.total_sats / 1000, 100)}%` }} />
+                  <span className="ob-shares">{satsToShares(o.total_sats)}</span>
+                  <span className="ob-sats">({formatSats(o.total_sats)})</span>
+                  <div className="ob-bar" style={{ width: `${Math.min(satsToShares(o.total_sats) * 5, 100)}%` }} />
                 </div>
               ))}
               {(!market.orderBook?.yes || market.orderBook.yes.length === 0) && (
-                <span className="empty">No bids</span>
+                <span className="empty">No offers</span>
               )}
             </div>
             <div className="ob-side ob-no">
-              <h4>NO Bids</h4>
+              <h4>NO Offers</h4>
+              <div className="ob-header-row">
+                <span>Price</span>
+                <span>Shares</span>
+              </div>
               {market.orderBook?.no.map((o, i) => (
                 <div key={i} className="ob-row">
                   <span className="ob-price">{o.price_cents}%</span>
-                  <span className="ob-amount">{formatSats(o.total_sats)} sats</span>
-                  <div className="ob-bar ob-bar-no" style={{ width: `${Math.min(o.total_sats / 1000, 100)}%` }} />
+                  <span className="ob-shares">{satsToShares(o.total_sats)}</span>
+                  <span className="ob-sats">({formatSats(o.total_sats)})</span>
+                  <div className="ob-bar ob-bar-no" style={{ width: `${Math.min(satsToShares(o.total_sats) * 5, 100)}%` }} />
                 </div>
               ))}
               {(!market.orderBook?.no || market.orderBook.no.length === 0) && (
-                <span className="empty">No bids</span>
+                <span className="empty">No offers</span>
               )}
             </div>
           </div>
@@ -1656,8 +1706,8 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
             <h3>Recent Trades</h3>
             {market.recentTrades.map((t, i) => (
               <div key={i} className="trade-row">
-                <span>{t.price_cents}%</span>
-                <span>{formatSats(t.amount_sats)} sats</span>
+                <span className="trade-price">{t.price_cents}%</span>
+                <span className="trade-shares">{satsToShares(t.amount_sats)} share{satsToShares(t.amount_sats) !== 1 ? 's' : ''}</span>
                 <span className="trade-time">{new Date(t.created_at).toLocaleString()}</span>
               </div>
             ))}

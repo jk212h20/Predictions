@@ -4853,3 +4853,109 @@ label {
     gap: 0.5rem;
   }
 }
+
+/* ==================== IMPROVED TRADE PANEL ==================== */
+.share-explainer {
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.share-explainer strong {
+  color: var(--accent);
+}
+
+.trade-summary-detailed {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.trade-summary-detailed .summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  font-size: 0.9375rem;
+}
+
+.trade-summary-detailed .summary-row:not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+.trade-summary-detailed .summary-value {
+  text-align: right;
+}
+
+.trade-summary-detailed .summary-value.cost {
+  color: var(--text-muted);
+}
+
+.trade-summary-detailed .summary-value.payout {
+  color: var(--text-bright);
+}
+
+.trade-summary-detailed .summary-value.profit {
+  color: var(--yes-color);
+}
+
+.trade-summary-detailed .profit-row {
+  background: var(--yes-bg);
+  margin: 0.5rem -1.25rem -1rem;
+  padding: 0.75rem 1.25rem;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
+.profit-percent {
+  color: var(--yes-color);
+  font-size: 0.8125rem;
+  opacity: 0.8;
+}
+
+/* Order Book Improvements */
+.ob-hint {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  margin-bottom: 1rem;
+}
+
+.ob-header-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.5rem;
+}
+
+.ob-shares {
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.ob-sats {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: 0.5rem;
+}
+
+/* Recent Trades Improvements */
+.trade-price {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.trade-shares {
+  color: var(--text-bright);
+}
