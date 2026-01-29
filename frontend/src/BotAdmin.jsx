@@ -85,7 +85,9 @@ export default function BotAdmin({ onClose }) {
   
   // Withdrawal admin state
   const [pendingWithdrawals, setPendingWithdrawals] = useState([]);
+  const [pendingOnchainWithdrawals, setPendingOnchainWithdrawals] = useState([]);
   const [channelBalance, setChannelBalance] = useState(null);
+  const [onchainBalance, setOnchainBalance] = useState(null);
   const [loadingWithdrawals, setLoadingWithdrawals] = useState(false);
   const [processingWithdrawal, setProcessingWithdrawal] = useState(null);
 
@@ -419,19 +421,23 @@ export default function BotAdmin({ onClose }) {
               setActiveTab('withdrawals');
               setLoadingWithdrawals(true);
               try {
-                const [withdrawals, balance] = await Promise.all([
+                const [withdrawals, balance, onchainWithdrawals, onchainBal] = await Promise.all([
                   api.getAdminPendingWithdrawals(),
-                  api.getChannelBalance()
+                  api.getChannelBalance(),
+                  api.getAdminOnchainPendingWithdrawals(),
+                  api.getOnchainBalance().catch(() => null)
                 ]);
                 setPendingWithdrawals(withdrawals || []);
                 setChannelBalance(balance);
+                setPendingOnchainWithdrawals(onchainWithdrawals || []);
+                setOnchainBalance(onchainBal);
               } catch (err) {
                 console.error('Failed to load withdrawals:', err);
               }
               setLoadingWithdrawals(false);
             }}
           >
-            💸 Withdrawals {pendingWithdrawals.length > 0 && `(${pendingWithdrawals.length})`}
+            💸 Withdrawals {(pendingWithdrawals.length + pendingOnchainWithdrawals.length) > 0 && `(${pendingWithdrawals.length + pendingOnchainWithdrawals.length})`}
           </button>
         </div>
 
@@ -1553,17 +1559,107 @@ export default function BotAdmin({ onClose }) {
                 </div>
               )}
               
+              {/* ON-CHAIN WITHDRAWALS SECTION */}
+              <h3 style={{ marginTop: '2rem' }}>⛓️ On-Chain Withdrawals</h3>
+              
+              {onchainBalance && (
+                <div className="channel-balance-info">
+                  <div className="balance-stat">
+                    <label>On-Chain Balance</label>
+                    <value>{formatSats(onchainBalance.balance_sats)} sats</value>
+                  </div>
+                </div>
+              )}
+              
+              {pendingOnchainWithdrawals.length === 0 ? (
+                <div className="empty-state">
+                  <p>✅ No pending on-chain withdrawals</p>
+                </div>
+              ) : (
+                <div className="withdrawals-list">
+                  {pendingOnchainWithdrawals.map(pw => (
+                    <div key={pw.id} className="withdrawal-card onchain">
+                      <div className="withdrawal-header">
+                        <span className="withdrawal-user">{pw.username || pw.email || 'Unknown User'}</span>
+                        <span className="withdrawal-amount">{formatSats(pw.amount_sats)} sats</span>
+                        <span className="withdrawal-type">⛓️ On-Chain</span>
+                      </div>
+                      <div className="withdrawal-details">
+                        <div><label>User On-Chain Deposits:</label> {formatSats(pw.user_total_onchain_deposits)} sats</div>
+                        <div><label>Requested:</label> {new Date(pw.created_at).toLocaleString()}</div>
+                        <div><label>Fee Paid By:</label> {pw.user_pays_fee ? 'User' : 'Platform (free withdrawal)'}</div>
+                        <div className="address-preview">
+                          <label>Address:</label> 
+                          <code>{pw.dest_address?.substring(0, 30)}...</code>
+                        </div>
+                      </div>
+                      <div className="withdrawal-actions">
+                        <button 
+                          className="btn btn-success"
+                          onClick={async () => {
+                            if (!confirm(`Approve on-chain withdrawal of ${formatSats(pw.amount_sats)} sats to ${pw.dest_address}?`)) return;
+                            setProcessingWithdrawal(pw.id);
+                            try {
+                              const result = await api.approveOnchainWithdrawal(pw.id);
+                              alert(`✅ On-chain withdrawal approved! TXID: ${result.txid?.substring(0, 20)}...`);
+                              // Refresh list
+                              const [onchainWithdrawals, onchainBal] = await Promise.all([
+                                api.getAdminOnchainPendingWithdrawals(),
+                                api.getOnchainBalance().catch(() => null)
+                              ]);
+                              setPendingOnchainWithdrawals(onchainWithdrawals || []);
+                              setOnchainBalance(onchainBal);
+                            } catch (err) {
+                              alert('❌ Failed to approve: ' + err.message);
+                            }
+                            setProcessingWithdrawal(null);
+                          }}
+                          disabled={processingWithdrawal === pw.id}
+                        >
+                          {processingWithdrawal === pw.id ? 'Processing...' : '✅ Approve'}
+                        </button>
+                        <button 
+                          className="btn btn-danger"
+                          onClick={async () => {
+                            const reason = prompt('Reason for rejection (optional):');
+                            if (reason === null) return; // cancelled
+                            setProcessingWithdrawal(pw.id);
+                            try {
+                              await api.rejectOnchainWithdrawal(pw.id, reason || 'Rejected by admin');
+                              alert('On-chain withdrawal rejected. Funds returned to user.');
+                              // Refresh list
+                              const onchainWithdrawals = await api.getAdminOnchainPendingWithdrawals();
+                              setPendingOnchainWithdrawals(onchainWithdrawals || []);
+                            } catch (err) {
+                              alert('Failed to reject: ' + err.message);
+                            }
+                            setProcessingWithdrawal(null);
+                          }}
+                          disabled={processingWithdrawal === pw.id}
+                        >
+                          ❌ Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
               <button 
                 className="btn btn-outline"
                 onClick={async () => {
                   setLoadingWithdrawals(true);
                   try {
-                    const [withdrawals, balance] = await Promise.all([
+                    const [withdrawals, balance, onchainWithdrawals, onchainBal] = await Promise.all([
                       api.getAdminPendingWithdrawals(),
-                      api.getChannelBalance()
+                      api.getChannelBalance(),
+                      api.getAdminOnchainPendingWithdrawals(),
+                      api.getOnchainBalance().catch(() => null)
                     ]);
                     setPendingWithdrawals(withdrawals || []);
                     setChannelBalance(balance);
+                    setPendingOnchainWithdrawals(onchainWithdrawals || []);
+                    setOnchainBalance(onchainBal);
                   } catch (err) {
                     console.error('Failed to refresh:', err);
                   }
@@ -1571,7 +1667,7 @@ export default function BotAdmin({ onClose }) {
                 }}
                 style={{ marginTop: '1rem' }}
               >
-                🔄 Refresh
+                🔄 Refresh All
               </button>
             </div>
           )}
