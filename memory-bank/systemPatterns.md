@@ -232,8 +232,93 @@ id, user_id, amount_sats, payment_request, status, rejection_reason, approved_by
 - `POST /api/wallet/withdraw/cancel` - cancel pending (self-refund)
 - `GET /api/wallet/pending-withdrawals` - list own pending
 
+## On-Chain Bitcoin System
+
+### Overview
+In addition to Lightning Network, the platform supports on-chain Bitcoin deposits and withdrawals.
+
+### On-Chain Deposits
+
+**Flow:**
+1. User clicks "On-Chain" tab in wallet modal
+2. User clicks "Generate Address" → API creates new P2WPKH address via LND
+3. Address stored in `onchain_deposits` table
+4. QR code displayed for scanning
+5. User sends Bitcoin to address
+6. App polls `checkAddressesForDeposits()` to detect incoming funds
+7. Auto-credit rules:
+   - ≤100k sats: Credit immediately (0-conf)
+   - >100k sats: Wait for 1 confirmation
+
+**Database: onchain_deposits**
+```sql
+id, user_id, address, amount_sats, txid, confirmations, credited, created_at, detected_at, confirmed_at
+```
+- `address`: Unique per deposit request
+- `credited`: 0 = waiting, 1 = balance updated
+
+### On-Chain Withdrawals
+
+**Flow:**
+1. User enters Bitcoin address and amount (min 10k sats)
+2. Validation: balance check, address format, no unconfirmed deposits
+3. **ATOMIC TRANSACTION**: Deduct balance, create withdrawal record, create transaction record
+4. Withdrawal goes to admin queue (no auto-approval)
+5. Admin reviews and approves (SendCoins via LND) or rejects (refund to user)
+
+**Why admin queue?** On-chain fees are significant, and there's no easy way to validate the address belongs to the user. Manual review prevents abuse.
+
+**Atomicity Fix (2026-01-29):**
+```javascript
+const createWithdrawal = db.transaction(() => {
+  db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, userId);
+  db.prepare('INSERT INTO onchain_withdrawals ...').run(...);
+  db.prepare('INSERT INTO transactions ...').run(...);
+  return { withdrawalId, newBalance };
+});
+```
+If any statement fails, all roll back. User's balance is never affected without a corresponding record.
+
+**Database: onchain_withdrawals**
+```sql
+id, user_id, amount_sats, dest_address, fee_sats, user_pays_fee, status, txid, rejection_reason, approved_by, created_at, processed_at
+```
+- `user_pays_fee`: 0 = free (first 10), 1 = user covers fee
+- `status`: 'pending', 'completed', 'rejected', 'failed'
+- `txid`: Set when admin approves and broadcast succeeds
+
+### Admin Endpoints (On-Chain)
+- `GET /api/admin/onchain/withdrawals/pending` - View all pending
+- `POST /api/admin/onchain/withdrawals/:id/approve` - Send via LND SendCoins
+- `POST /api/admin/onchain/withdrawals/:id/reject` - Refund to user balance
+- `GET /api/admin/onchain/balance` - Check on-chain wallet balance
+
+### User Endpoints (On-Chain)
+- `POST /api/wallet/onchain/deposit` - Generate new deposit address
+- `GET /api/wallet/onchain/deposit/status` - Check/credit pending deposits
+- `GET /api/wallet/onchain/deposits` - List deposit history
+- `POST /api/wallet/onchain/withdraw` - Request on-chain withdrawal
+- `POST /api/wallet/onchain/withdraw/cancel` - Cancel pending (self-refund)
+- `GET /api/wallet/onchain/pending-withdrawals` - List pending withdrawals
+
+### LND Integration (lightning.js)
+```javascript
+// Address generation
+generateOnchainAddress('p2wkh') → { address, is_real }
+
+// Check for deposits
+checkAddressesForDeposits(addresses) → [{ matched_address, amount_sats, confirmations, txid }]
+
+// Send on-chain
+sendOnchain(address, amount_sats) → { txid }
+
+// Balance check
+getOnchainBalance() → { confirmed_sats, unconfirmed_sats }
+```
+
 ## Future Improvements (Backlog)
 
 - [ ] 3D Offers Landscape visualization
 - [ ] Auto-initialize weights if empty
 - [ ] Batch SQL updates for order scaling
+- [ ] On-chain withdrawal admin UI in BotAdmin.jsx
