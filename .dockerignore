@@ -1,0 +1,58 @@
+# Dependencies - will be installed fresh in container
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+# Build outputs - will be built in container
+frontend/dist/
+dist/
+build/
+
+# Git
+.git/
+.gitignore
+
+# Environment files - Railway injects these
+.env
+.env.*
+!.env.example
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test/coverage
+coverage/
+*.test.js
+*.spec.js
+
+# Documentation
+*.md
+!README.md
+
+# Memory bank (not needed in production)
+memory-bank/
+
+# Research files
+research/
+
+# Config files not needed in Docker
+nixpacks.toml
+railway.toml
+railway.json
+.nvmrc

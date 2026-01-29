@@ -161,6 +161,16 @@ export const withdraw = (payment_request, amount_sats) =>
     body: JSON.stringify({ payment_request, amount_sats }),
   }).then(handleResponse);
 
+export const getPendingWithdrawals = () =>
+  fetch(`${API_BASE}/wallet/pending-withdrawals`, { headers: getHeaders() }).then(handleResponse);
+
+export const cancelWithdrawal = (withdrawal_id) =>
+  fetch(`${API_BASE}/wallet/withdraw/cancel`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ withdrawal_id }),
+  }).then(handleResponse);
+
 // Admin
 export const getAdminMarkets = () =>
   fetch(`${API_BASE}/admin/markets`, { headers: getHeaders() }).then(handleResponse);

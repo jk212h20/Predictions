@@ -1,8 +1,16 @@
 # Progress - Predictions Market Maker Bot
 
-## Latest Update: 2026-01-28 - Budget Calculation Fix
+## Latest Update: 2026-01-28 - Withdrawal UI Enhancement
 
-### Fixed Issues
+### Latest Changes
+1. **Enhanced Withdrawal UI** - Complete wallet modal with proper withdrawal flow
+2. **Pending Withdrawals** - Shows list of pending withdrawals with cancel option
+3. **Auto-approval Logic** - Withdrawals ≤100k sats AND ≤total deposits are instant
+4. **Feedback States** - Processing, completed, and pending states with proper UI
+
+### Previous Updates
+
+#### Budget Calculation Fix (Earlier)
 1. **Deployment Preview/Actual Mismatch** - Fixed the core bug where deployment preview showed costs exceeding user balance
 2. **Budget Calculation Formula** - Now correctly uses: `deployable = min(balance, max_loss) × multiplier × pullback_ratio`
 3. **1% Threshold Pullback** - Changed from 10% tiers to 1% thresholds for smoother liquidity adjustment
@@ -24,6 +32,7 @@ At 50% exposure (500K):
 
 ### What Works Now
 - [x] Lightning Network deposits (real LND integration)
+- [x] Lightning Network withdrawals (real LND integration with auto-approval)
 - [x] Lightning Network login (LNURL-auth)
 - [x] Market creation and order matching
 - [x] Market resolution with 3-minute delay
@@ -35,12 +44,13 @@ At 50% exposure (500K):
 - [x] Multiplier for liquidity amplification
 - [x] 1% threshold-based pullback
 - [x] Active curve selection
+- [x] Enhanced withdrawal UI with pending state tracking
 
 ### What's Left
-- [ ] Real withdrawal functionality (LND pay invoice)
 - [ ] Mobile UI polish
 - [ ] Performance optimization for large order books
 - [ ] More sophisticated pullback strategies
+- [ ] Admin panel for withdrawal approval
 
 ### Database Schema Notes
 - `bot_config` - stores max_acceptable_loss, global_multiplier, threshold_percent, bot_user_id

@@ -494,14 +494,29 @@ function WalletModal({ user, onClose, onRefresh }) {
   const [depositError, setDepositError] = useState('');
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawInvoice, setWithdrawInvoice] = useState('');
+  const [withdrawStatus, setWithdrawStatus] = useState('idle'); // idle, processing, completed, pending, error
+  const [withdrawResult, setWithdrawResult] = useState(null);
+  const [withdrawError, setWithdrawError] = useState('');
+  const [pendingWithdrawals, setPendingWithdrawals] = useState([]);
+  const [cancellingId, setCancellingId] = useState(null);
   const pollingRef = useRef(null);
 
-  // Cleanup polling on unmount
+  // Load pending withdrawals on mount
   useEffect(() => {
+    loadPendingWithdrawals();
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
   }, []);
+
+  const loadPendingWithdrawals = async () => {
+    try {
+      const pending = await api.getPendingWithdrawals();
+      setPendingWithdrawals(pending);
+    } catch (err) {
+      console.error('Failed to load pending withdrawals:', err);
+    }
+  };
 
   const handleDeposit = async () => {
     setDepositStatus('generating');
@@ -580,15 +595,69 @@ function WalletModal({ user, onClose, onRefresh }) {
   };
 
   const handleWithdraw = async () => {
+    if (!withdrawAmount || parseInt(withdrawAmount) < 1000) {
+      setWithdrawError('Minimum withdrawal is 1,000 sats');
+      return;
+    }
+    if (!withdrawInvoice) {
+      setWithdrawError('Please paste a Lightning invoice');
+      return;
+    }
+    
+    setWithdrawStatus('processing');
+    setWithdrawError('');
+    setWithdrawResult(null);
+    
     try {
-      await api.withdraw(withdrawInvoice, parseInt(withdrawAmount));
+      const result = await api.withdraw(withdrawInvoice, parseInt(withdrawAmount));
       await onRefresh();
+      
+      if (result.status === 'completed') {
+        setWithdrawStatus('completed');
+        setWithdrawResult({
+          type: 'success',
+          message: 'Withdrawal sent successfully!',
+          balance: result.balance_sats,
+          botAdjustment: result.bot_adjustment
+        });
+      } else if (result.status === 'pending') {
+        setWithdrawStatus('pending');
+        setWithdrawResult({
+          type: 'pending',
+          message: 'Withdrawal submitted for admin approval',
+          reason: result.reason,
+          withdrawalId: result.withdrawal_id
+        });
+        // Refresh pending withdrawals list
+        loadPendingWithdrawals();
+      }
+      
       setWithdrawAmount('');
       setWithdrawInvoice('');
-      alert('Withdrawal sent!');
+    } catch (err) {
+      setWithdrawStatus('error');
+      setWithdrawError(err.message);
+    }
+  };
+
+  const handleCancelWithdrawal = async (withdrawalId) => {
+    if (!confirm('Cancel this pending withdrawal? Funds will be returned to your balance.')) return;
+    
+    setCancellingId(withdrawalId);
+    try {
+      await api.cancelWithdrawal(withdrawalId);
+      await loadPendingWithdrawals();
+      await onRefresh();
     } catch (err) {
       alert(err.message);
     }
+    setCancellingId(null);
+  };
+
+  const resetWithdrawState = () => {
+    setWithdrawStatus('idle');
+    setWithdrawResult(null);
+    setWithdrawError('');
   };
 
   return (
@@ -707,25 +776,103 @@ function WalletModal({ user, onClose, onRefresh }) {
 
         <div className="wallet-section">
           <h3>Withdraw</h3>
-          <input
-            type="number"
-            placeholder="Amount (sats)"
-            value={withdrawAmount}
-            onChange={e => setWithdrawAmount(e.target.value)}
-          />
-          <input
-            type="text"
-            placeholder="Paste your Lightning Invoice here"
-            value={withdrawInvoice}
-            onChange={e => setWithdrawInvoice(e.target.value)}
-          />
-          <button 
-            className="btn btn-primary" 
-            onClick={handleWithdraw}
-            disabled={!withdrawAmount || !withdrawInvoice}
-          >
-            Withdraw
-          </button>
+          
+          {withdrawStatus === 'idle' || withdrawStatus === 'error' ? (
+            <>
+              {withdrawError && <div className="auth-error">{withdrawError}</div>}
+              <div className="withdraw-info">
+                <p className="withdraw-rules">
+                  ⚡ Withdrawals ≤100k sats that don't exceed your deposits are instant.<br/>
+                  Larger withdrawals require admin approval.
+                </p>
+              </div>
+              <div className="deposit-amount-input">
+                <input
+                  type="number"
+                  placeholder="Amount"
+                  value={withdrawAmount}
+                  onChange={e => setWithdrawAmount(e.target.value)}
+                  min="1000"
+                  step="1000"
+                />
+                <span className="sats-label">sats</span>
+              </div>
+              <div className="deposit-presets">
+                <button className="btn btn-small btn-outline" onClick={() => setWithdrawAmount('10000')}>10k</button>
+                <button className="btn btn-small btn-outline" onClick={() => setWithdrawAmount('50000')}>50k</button>
+                <button className="btn btn-small btn-outline" onClick={() => setWithdrawAmount('100000')}>100k</button>
+                <button className="btn btn-small btn-outline" onClick={() => setWithdrawAmount(String(user.balance_sats))}>Max</button>
+              </div>
+              <input
+                type="text"
+                placeholder="Paste your Lightning Invoice here"
+                value={withdrawInvoice}
+                onChange={e => setWithdrawInvoice(e.target.value)}
+                className="withdraw-invoice-input"
+              />
+              <button 
+                className="btn btn-primary btn-large" 
+                onClick={handleWithdraw}
+                disabled={!withdrawAmount || !withdrawInvoice || parseInt(withdrawAmount) < 1000}
+              >
+                Withdraw {withdrawAmount ? formatSats(parseInt(withdrawAmount)) : ''} sats
+              </button>
+            </>
+          ) : withdrawStatus === 'processing' ? (
+            <div className="withdraw-processing">
+              <div className="spinner"></div>
+              <p>Processing withdrawal...</p>
+            </div>
+          ) : withdrawStatus === 'completed' && withdrawResult ? (
+            <div className="withdraw-success">
+              <div className="success-icon">✓</div>
+              <p>{withdrawResult.message}</p>
+              <p className="success-amount">New balance: {formatSats(withdrawResult.balance)} sats</p>
+              {withdrawResult.botAdjustment && (
+                <div className="bot-adjustment-notice">
+                  ⚠️ {withdrawResult.botAdjustment.message}
+                </div>
+              )}
+              <button className="btn btn-outline" onClick={resetWithdrawState}>
+                Make Another Withdrawal
+              </button>
+            </div>
+          ) : withdrawStatus === 'pending' && withdrawResult ? (
+            <div className="withdraw-pending">
+              <div className="pending-icon">⏳</div>
+              <p>{withdrawResult.message}</p>
+              <p className="pending-reason">{withdrawResult.reason}</p>
+              <p className="pending-note">
+                Your funds are held until the withdrawal is processed.<br/>
+                You can cancel this withdrawal below to get your funds back.
+              </p>
+              <button className="btn btn-outline" onClick={resetWithdrawState}>
+                Make Another Withdrawal
+              </button>
+            </div>
+          ) : null}
+
+          {/* Pending Withdrawals List */}
+          {pendingWithdrawals.length > 0 && (
+            <div className="pending-withdrawals-list">
+              <h4>Pending Withdrawals</h4>
+              {pendingWithdrawals.map(pw => (
+                <div key={pw.id} className="pending-withdrawal-item">
+                  <div className="pw-info">
+                    <span className="pw-amount">{formatSats(pw.amount_sats)} sats</span>
+                    <span className="pw-date">{new Date(pw.created_at).toLocaleString()}</span>
+                  </div>
+                  <button 
+                    className="btn btn-small btn-danger"
+                    onClick={() => handleCancelWithdrawal(pw.id)}
+                    disabled={cancellingId === pw.id}
+                  >
+                    {cancellingId === pw.id ? 'Cancelling...' : 'Cancel'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <button className="btn btn-outline modal-close" onClick={onClose}>Close</button>

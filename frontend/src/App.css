@@ -4463,6 +4463,176 @@ label {
   }
 }
 
+/* ==================== ENHANCED WITHDRAWAL STYLES ==================== */
+.withdraw-info {
+  margin-bottom: 1rem;
+}
+
+.withdraw-rules {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.withdraw-invoice-input {
+  margin-bottom: 1rem;
+}
+
+.withdraw-processing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 2rem 1rem;
+}
+
+.withdraw-processing p {
+  color: var(--text-muted);
+  font-size: 1rem;
+}
+
+.withdraw-success {
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.withdraw-success .success-icon {
+  margin-bottom: 1rem;
+}
+
+.withdraw-success p {
+  font-size: 1.125rem;
+  color: var(--text-bright);
+  margin-bottom: 0.5rem;
+}
+
+.withdraw-success .success-amount {
+  font-size: 1.25rem !important;
+  font-weight: 700;
+  color: var(--yes-color) !important;
+}
+
+.withdraw-pending {
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.pending-icon {
+  width: 64px;
+  height: 64px;
+  background: rgba(210, 153, 34, 0.2);
+  color: #d29922;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  margin: 0 auto 1rem;
+}
+
+.withdraw-pending p {
+  color: var(--text-bright);
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.pending-reason {
+  color: #d29922;
+  font-weight: 500;
+}
+
+.pending-note {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  margin: 1rem 0;
+}
+
+.bot-adjustment-notice {
+  background: rgba(210, 153, 34, 0.15);
+  border: 1px solid rgba(210, 153, 34, 0.3);
+  color: #d29922;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-sm);
+  margin: 1rem 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Pending Withdrawals List */
+.pending-withdrawals-list {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.pending-withdrawals-list h4 {
+  font-size: 1rem;
+  color: var(--text-bright);
+  margin-bottom: 1rem;
+}
+
+.pending-withdrawal-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.875rem 1rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.5rem;
+}
+
+.pending-withdrawal-item:last-child {
+  margin-bottom: 0;
+}
+
+.pw-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.pw-amount {
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.pw-date {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* Responsive Withdrawal Styles */
+@media (max-width: 480px) {
+  .pending-withdrawal-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+  
+  .pending-withdrawal-item .btn {
+    width: 100%;
+  }
+  
+  .withdraw-success,
+  .withdraw-pending {
+    padding: 1.5rem 0.5rem;
+  }
+  
+  .pending-icon,
+  .withdraw-success .success-icon {
+    width: 56px;
+    height: 56px;
+    font-size: 1.75rem;
+  }
+}
+
 /* ==================== LANDSCAPE PHONE ==================== */
 @media (max-width: 768px) and (orientation: landscape) {
   .modal {
