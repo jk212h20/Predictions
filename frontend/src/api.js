@@ -539,3 +539,37 @@ export const rejectOnchainWithdrawal = (withdrawalId, reason) =>
     headers: getHeaders(),
     body: JSON.stringify({ reason }),
   }).then(handleResponse);
+
+// ==================== ADMIN RECONCILIATION ====================
+
+// Get reconciliation overview (database vs node)
+export const getReconciliationOverview = () =>
+  fetch(`${API_BASE}/admin/reconciliation/overview`, { headers: getHeaders() }).then(handleResponse);
+
+// Get node invoices (Lightning deposits from node perspective)
+export const getNodeInvoices = () =>
+  fetch(`${API_BASE}/admin/reconciliation/node/invoices`, { headers: getHeaders() }).then(handleResponse);
+
+// Get node payments (Lightning withdrawals from node perspective)
+export const getNodePayments = () =>
+  fetch(`${API_BASE}/admin/reconciliation/node/payments`, { headers: getHeaders() }).then(handleResponse);
+
+// Get node on-chain transactions
+export const getNodeOnchainTransactions = () =>
+  fetch(`${API_BASE}/admin/reconciliation/node/onchain`, { headers: getHeaders() }).then(handleResponse);
+
+// Match Lightning deposits: database vs node
+export const matchDeposits = () =>
+  fetch(`${API_BASE}/admin/reconciliation/match/deposits`, { headers: getHeaders() }).then(handleResponse);
+
+// Match Lightning withdrawals: database vs node
+export const matchWithdrawals = () =>
+  fetch(`${API_BASE}/admin/reconciliation/match/withdrawals`, { headers: getHeaders() }).then(handleResponse);
+
+// Match on-chain deposits: database vs node
+export const matchOnchainDeposits = () =>
+  fetch(`${API_BASE}/admin/reconciliation/match/onchain-deposits`, { headers: getHeaders() }).then(handleResponse);
+
+// Match on-chain withdrawals: database vs node
+export const matchOnchainWithdrawals = () =>
+  fetch(`${API_BASE}/admin/reconciliation/match/onchain-withdrawals`, { headers: getHeaders() }).then(handleResponse);

@@ -1445,6 +1445,10 @@ function cancelAllUserOrders(userId) {
 /**
  * ATOMIC PULLBACK - Called when a bot order is filled
  * This MUST be called within the same transaction as the order fill
+ * 
+ * IMPORTANT: Pullback is applied to all OTHER markets, NOT the market where
+ * the action occurred. The active market already lost liquidity from the fills,
+ * so we don't want to "double penalize" it.
  */
 function atomicPullback(filledAmount, marketId) {
   const config = getConfig();
@@ -1462,13 +1466,14 @@ function atomicPullback(filledAmount, marketId) {
     };
   }
   
-  // Tier changed - need to adjust all bot orders
+  // Tier changed - need to adjust bot orders on OTHER markets
+  // (exclude the market where action just occurred - it already lost liquidity from fills)
   const pullbackRatio = calculatePullbackRatio(newExposure, config.max_acceptable_loss);
   
-  // Get all bot orders and reduce them proportionally
+  // Get bot orders EXCLUDING the market where action occurred
   const botOrders = db.prepare(`
-    SELECT * FROM orders WHERE user_id = ? AND status IN ('open', 'partial')
-  `).all(config.bot_user_id);
+    SELECT * FROM orders WHERE user_id = ? AND status IN ('open', 'partial') AND market_id != ?
+  `).all(config.bot_user_id, marketId);
   
   let ordersModified = 0;
   let totalReduction = 0;
@@ -1514,7 +1519,8 @@ function atomicPullback(filledAmount, marketId) {
     exposure: newExposure,
     pullbackRatio,
     ordersModified,
-    totalReduction
+    totalReduction,
+    excludedMarket: marketId // The market where action occurred (not affected by pullback)
   }), exposureUpdate.oldExposure, newExposure);
   
   return {

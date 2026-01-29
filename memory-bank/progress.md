@@ -73,7 +73,7 @@ At 50% exposure (500K):
 - [ ] Mobile UI polish
 - [ ] Performance optimization for large order books
 - [ ] More sophisticated pullback strategies (optional enhancement)
-- [ ] On-chain withdrawal admin UI in BotAdmin.jsx (currently API-only)
+- [x] On-chain withdrawal admin UI in BotAdmin.jsx ✓ (verified 2026-01-29)
 
 ### Database Schema Notes
 - `bot_config` - stores max_acceptable_loss, global_multiplier, threshold_percent, bot_user_id
@@ -87,4 +87,3 @@ At 50% exposure (500K):
 - Pullback currently scales all orders proportionally; could be smarter
 - No batch SQL update for order scaling (done one-by-one)
 - lastPullbackExposure tracking not implemented yet
-- On-chain withdrawal admin UI not in frontend yet (use API endpoints directly)

@@ -2625,6 +2625,558 @@ app.post('/api/admin/onchain/withdrawals/:id/reject', authMiddleware, adminMiddl
   res.json({ success: true, message: 'Withdrawal rejected and funds returned to user' });
 });
 
+// ==================== ADMIN RECONCILIATION ROUTES ====================
+
+// Get deposit/withdrawal reconciliation data - database view vs node view
+app.get('/api/admin/reconciliation/overview', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // ========== DATABASE VIEW ==========
+    
+    // Lightning deposits (from transactions table)
+    const dbLnDeposits = db.prepare(`
+      SELECT t.*, u.username, u.email
+      FROM transactions t
+      JOIN users u ON t.user_id = u.id
+      WHERE t.type = 'deposit' AND t.lightning_payment_hash IS NOT NULL
+      ORDER BY t.created_at DESC
+      LIMIT 100
+    `).all();
+    
+    // On-chain deposits (from onchain_deposits table)
+    const dbOnchainDeposits = db.prepare(`
+      SELECT od.*, u.username, u.email
+      FROM onchain_deposits od
+      JOIN users u ON od.user_id = u.id
+      ORDER BY od.created_at DESC
+      LIMIT 100
+    `).all();
+    
+    // Lightning withdrawals (from pending_withdrawals + completed in transactions)
+    const dbLnWithdrawals = db.prepare(`
+      SELECT pw.*, u.username, u.email
+      FROM pending_withdrawals pw
+      JOIN users u ON pw.user_id = u.id
+      ORDER BY pw.created_at DESC
+      LIMIT 100
+    `).all();
+    
+    // On-chain withdrawals (from onchain_withdrawals table)
+    const dbOnchainWithdrawals = db.prepare(`
+      SELECT ow.*, u.username, u.email
+      FROM onchain_withdrawals ow
+      JOIN users u ON ow.user_id = u.id
+      ORDER BY ow.created_at DESC
+      LIMIT 100
+    `).all();
+    
+    // Database totals
+    const dbTotals = db.prepare(`
+      SELECT 
+        (SELECT COALESCE(SUM(amount_sats), 0) FROM transactions WHERE type = 'deposit' AND status = 'completed') as total_deposits_credited,
+        (SELECT COALESCE(SUM(ABS(amount_sats)), 0) FROM transactions WHERE type = 'withdrawal' AND status = 'completed') as total_withdrawals_completed,
+        (SELECT COALESCE(SUM(amount_sats), 0) FROM onchain_deposits WHERE credited = 1) as total_onchain_deposits_credited,
+        (SELECT COALESCE(SUM(amount_sats), 0) FROM onchain_withdrawals WHERE status = 'completed') as total_onchain_withdrawals_completed,
+        (SELECT COALESCE(SUM(amount_sats), 0) FROM pending_withdrawals WHERE status = 'pending') as total_ln_pending,
+        (SELECT COALESCE(SUM(amount_sats), 0) FROM onchain_withdrawals WHERE status = 'pending') as total_onchain_pending,
+        (SELECT COALESCE(SUM(balance_sats), 0) FROM users) as total_user_balances
+    `).get();
+    
+    // ========== NODE VIEW ==========
+    
+    // Get channel balance (Lightning)
+    let nodeChannelBalance = { outbound_sats: 0, inbound_sats: 0, is_real: false };
+    try {
+      nodeChannelBalance = await lightning.getChannelBalance();
+    } catch (err) {
+      console.error('Failed to get channel balance:', err);
+    }
+    
+    // Get on-chain balance
+    let nodeOnchainBalance = { confirmed_sats: 0, unconfirmed_sats: 0, is_real: false };
+    try {
+      nodeOnchainBalance = await lightning.getOnchainBalance();
+    } catch (err) {
+      console.error('Failed to get on-chain balance:', err);
+    }
+    
+    // Get on-chain transactions from node
+    let nodeOnchainTxs = [];
+    try {
+      nodeOnchainTxs = await lightning.getOnchainTransactions();
+    } catch (err) {
+      console.error('Failed to get on-chain transactions:', err);
+    }
+    
+    // Get node info
+    let nodeInfo = { is_real: false };
+    try {
+      nodeInfo = await lightning.getNodeInfo();
+    } catch (err) {
+      console.error('Failed to get node info:', err);
+    }
+    
+    // Calculate node totals from on-chain transactions
+    const nodeOnchainIncoming = nodeOnchainTxs
+      .filter(tx => tx.amount_sats > 0)
+      .reduce((sum, tx) => sum + tx.amount_sats, 0);
+    const nodeOnchainOutgoing = nodeOnchainTxs
+      .filter(tx => tx.amount_sats < 0)
+      .reduce((sum, tx) => sum + Math.abs(tx.amount_sats), 0);
+    
+    res.json({
+      database: {
+        lightning_deposits: dbLnDeposits,
+        onchain_deposits: dbOnchainDeposits,
+        lightning_withdrawals: dbLnWithdrawals,
+        onchain_withdrawals: dbOnchainWithdrawals,
+        totals: {
+          ...dbTotals,
+          total_ln_deposits: dbTotals.total_deposits_credited,
+          total_ln_withdrawals: dbTotals.total_withdrawals_completed,
+        }
+      },
+      node: {
+        info: nodeInfo,
+        channel_balance: nodeChannelBalance,
+        onchain_balance: nodeOnchainBalance,
+        onchain_transactions: nodeOnchainTxs,
+        totals: {
+          onchain_incoming: nodeOnchainIncoming,
+          onchain_outgoing: nodeOnchainOutgoing,
+          lightning_outbound: nodeChannelBalance.outbound_sats,
+          lightning_inbound: nodeChannelBalance.inbound_sats,
+        }
+      },
+      reconciliation: {
+        // Net position: what node should have vs what users are owed
+        total_user_balances: dbTotals.total_user_balances,
+        total_pending_withdrawals: dbTotals.total_ln_pending + dbTotals.total_onchain_pending,
+        total_node_balance: nodeChannelBalance.outbound_sats + nodeOnchainBalance.confirmed_sats,
+        // Node should have >= user_balances + pending_withdrawals (we hold their funds)
+        is_solvent: (nodeChannelBalance.outbound_sats + nodeOnchainBalance.confirmed_sats) >= dbTotals.total_user_balances,
+      },
+      is_real_node: nodeInfo.is_real && nodeChannelBalance.is_real,
+    });
+  } catch (err) {
+    console.error('Reconciliation overview error:', err);
+    res.status(500).json({ error: 'Failed to get reconciliation data', message: err.message });
+  }
+});
+
+// Get detailed Lightning invoice history from node
+app.get('/api/admin/reconciliation/node/invoices', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!lightning.isVoltageConfigured()) {
+      return res.json({ invoices: [], is_real: false, message: 'Node not configured' });
+    }
+    
+    // LND REST API: GET /v1/invoices
+    const response = await lightning.lndRequest ? 
+      await fetch(`${process.env.LND_REST_URL}/v1/invoices?num_max_invoices=100`, {
+        headers: { 'Grpc-Metadata-macaroon': process.env.LND_MACAROON }
+      }).then(r => r.json()) : { invoices: [] };
+    
+    const invoices = (response.invoices || []).map(inv => ({
+      payment_hash: Buffer.from(inv.r_hash || '', 'base64').toString('hex'),
+      payment_request: inv.payment_request,
+      memo: inv.memo,
+      amount_sats: parseInt(inv.value || 0),
+      amount_paid_sats: parseInt(inv.amt_paid_sat || 0),
+      settled: inv.settled,
+      state: inv.state,
+      created_at: inv.creation_date ? new Date(parseInt(inv.creation_date) * 1000).toISOString() : null,
+      settled_at: inv.settle_date && inv.settle_date !== '0' ? new Date(parseInt(inv.settle_date) * 1000).toISOString() : null,
+      expiry: parseInt(inv.expiry || 3600),
+    }));
+    
+    res.json({ invoices, is_real: true });
+  } catch (err) {
+    console.error('Failed to get node invoices:', err);
+    res.status(500).json({ error: 'Failed to get invoices', message: err.message });
+  }
+});
+
+// Get detailed Lightning payment history from node
+app.get('/api/admin/reconciliation/node/payments', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!lightning.isVoltageConfigured()) {
+      return res.json({ payments: [], is_real: false, message: 'Node not configured' });
+    }
+    
+    // LND REST API: GET /v1/payments
+    const response = await fetch(`${process.env.LND_REST_URL}/v1/payments?include_incomplete=true&max_payments=100`, {
+      headers: { 'Grpc-Metadata-macaroon': process.env.LND_MACAROON }
+    }).then(r => r.json()).catch(() => ({ payments: [] }));
+    
+    const payments = (response.payments || []).map(pmt => ({
+      payment_hash: pmt.payment_hash,
+      amount_sats: parseInt(pmt.value_sat || pmt.value || 0),
+      fee_sats: parseInt(pmt.fee_sat || pmt.fee || 0),
+      status: pmt.status,
+      created_at: pmt.creation_date ? new Date(parseInt(pmt.creation_date) * 1000).toISOString() : null,
+      payment_request: pmt.payment_request,
+      failure_reason: pmt.failure_reason,
+    }));
+    
+    res.json({ payments, is_real: true });
+  } catch (err) {
+    console.error('Failed to get node payments:', err);
+    res.status(500).json({ error: 'Failed to get payments', message: err.message });
+  }
+});
+
+// Get on-chain transactions from node with full details
+app.get('/api/admin/reconciliation/node/onchain', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const transactions = await lightning.getOnchainTransactions();
+    const balance = await lightning.getOnchainBalance();
+    
+    res.json({
+      transactions,
+      balance,
+      is_real: balance.is_real,
+    });
+  } catch (err) {
+    console.error('Failed to get on-chain data:', err);
+    res.status(500).json({ error: 'Failed to get on-chain data', message: err.message });
+  }
+});
+
+// Match database deposits against node invoices
+app.get('/api/admin/reconciliation/match/deposits', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // Get all deposits from database
+    const dbDeposits = db.prepare(`
+      SELECT t.*, u.username, u.email
+      FROM transactions t
+      JOIN users u ON t.user_id = u.id
+      WHERE t.type = 'deposit' AND t.lightning_payment_hash IS NOT NULL
+      ORDER BY t.created_at DESC
+      LIMIT 200
+    `).all();
+    
+    // Get invoices from node
+    let nodeInvoices = [];
+    if (lightning.isVoltageConfigured()) {
+      try {
+        const response = await fetch(`${process.env.LND_REST_URL}/v1/invoices?num_max_invoices=200`, {
+          headers: { 'Grpc-Metadata-macaroon': process.env.LND_MACAROON }
+        }).then(r => r.json());
+        nodeInvoices = (response.invoices || []).map(inv => ({
+          payment_hash: Buffer.from(inv.r_hash || '', 'base64').toString('hex'),
+          settled: inv.settled,
+          amount_sats: parseInt(inv.value || 0),
+          amount_paid_sats: parseInt(inv.amt_paid_sat || 0),
+        }));
+      } catch (err) {
+        console.error('Failed to get node invoices:', err);
+      }
+    }
+    
+    // Create lookup map
+    const nodeInvoiceMap = new Map(nodeInvoices.map(inv => [inv.payment_hash, inv]));
+    
+    // Match each database deposit
+    const results = dbDeposits.map(dep => {
+      const nodeInvoice = nodeInvoiceMap.get(dep.lightning_payment_hash);
+      let matchStatus = 'no_node_data';
+      let discrepancy = null;
+      
+      if (nodeInvoice) {
+        if (dep.status === 'completed' && nodeInvoice.settled) {
+          if (dep.amount_sats === nodeInvoice.amount_paid_sats) {
+            matchStatus = 'matched';
+          } else {
+            matchStatus = 'amount_mismatch';
+            discrepancy = {
+              db_amount: dep.amount_sats,
+              node_amount: nodeInvoice.amount_paid_sats,
+              difference: dep.amount_sats - nodeInvoice.amount_paid_sats,
+            };
+          }
+        } else if (dep.status === 'completed' && !nodeInvoice.settled) {
+          matchStatus = 'db_says_paid_node_says_no';
+          discrepancy = { db_status: dep.status, node_settled: nodeInvoice.settled };
+        } else if (dep.status === 'pending' && nodeInvoice.settled) {
+          matchStatus = 'node_says_paid_db_pending';
+          discrepancy = { db_status: dep.status, node_settled: nodeInvoice.settled };
+        } else {
+          matchStatus = 'both_pending';
+        }
+      }
+      
+      return {
+        ...dep,
+        node_invoice: nodeInvoice || null,
+        match_status: matchStatus,
+        discrepancy,
+      };
+    });
+    
+    // Summary
+    const summary = {
+      total: results.length,
+      matched: results.filter(r => r.match_status === 'matched').length,
+      amount_mismatch: results.filter(r => r.match_status === 'amount_mismatch').length,
+      db_says_paid_node_says_no: results.filter(r => r.match_status === 'db_says_paid_node_says_no').length,
+      node_says_paid_db_pending: results.filter(r => r.match_status === 'node_says_paid_db_pending').length,
+      no_node_data: results.filter(r => r.match_status === 'no_node_data').length,
+    };
+    
+    res.json({ deposits: results, summary, is_real: lightning.isVoltageConfigured() });
+  } catch (err) {
+    console.error('Failed to match deposits:', err);
+    res.status(500).json({ error: 'Failed to match deposits', message: err.message });
+  }
+});
+
+// Match database withdrawals against node payments
+app.get('/api/admin/reconciliation/match/withdrawals', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // Get completed withdrawals from database (Lightning)
+    const dbWithdrawals = db.prepare(`
+      SELECT pw.*, u.username, u.email
+      FROM pending_withdrawals pw
+      JOIN users u ON pw.user_id = u.id
+      WHERE pw.status IN ('completed', 'pending', 'rejected')
+      ORDER BY pw.created_at DESC
+      LIMIT 200
+    `).all();
+    
+    // Get payments from node
+    let nodePayments = [];
+    if (lightning.isVoltageConfigured()) {
+      try {
+        const response = await fetch(`${process.env.LND_REST_URL}/v1/payments?include_incomplete=true&max_payments=200`, {
+          headers: { 'Grpc-Metadata-macaroon': process.env.LND_MACAROON }
+        }).then(r => r.json());
+        nodePayments = (response.payments || []).map(pmt => ({
+          payment_hash: pmt.payment_hash,
+          payment_request: pmt.payment_request,
+          status: pmt.status,
+          amount_sats: parseInt(pmt.value_sat || pmt.value || 0),
+          fee_sats: parseInt(pmt.fee_sat || pmt.fee || 0),
+        }));
+      } catch (err) {
+        console.error('Failed to get node payments:', err);
+      }
+    }
+    
+    // Create lookup by payment_request (since we don't store payment_hash for outgoing)
+    const nodePaymentMap = new Map(nodePayments.map(pmt => [pmt.payment_request, pmt]));
+    
+    // Match each database withdrawal
+    const results = dbWithdrawals.map(wd => {
+      const nodePayment = nodePaymentMap.get(wd.payment_request);
+      let matchStatus = 'no_node_data';
+      let discrepancy = null;
+      
+      if (nodePayment) {
+        if (wd.status === 'completed' && nodePayment.status === 'SUCCEEDED') {
+          if (wd.amount_sats === nodePayment.amount_sats) {
+            matchStatus = 'matched';
+          } else {
+            matchStatus = 'amount_mismatch';
+            discrepancy = {
+              db_amount: wd.amount_sats,
+              node_amount: nodePayment.amount_sats,
+              difference: wd.amount_sats - nodePayment.amount_sats,
+            };
+          }
+        } else if (wd.status === 'completed' && nodePayment.status !== 'SUCCEEDED') {
+          matchStatus = 'db_says_completed_node_says_no';
+          discrepancy = { db_status: wd.status, node_status: nodePayment.status };
+        } else if (wd.status === 'pending') {
+          matchStatus = 'pending_in_db';
+        } else if (wd.status === 'rejected') {
+          if (nodePayment.status === 'SUCCEEDED') {
+            matchStatus = 'db_rejected_but_node_succeeded';
+            discrepancy = { db_status: wd.status, node_status: nodePayment.status };
+          } else {
+            matchStatus = 'both_failed';
+          }
+        }
+      }
+      
+      return {
+        ...wd,
+        node_payment: nodePayment || null,
+        match_status: matchStatus,
+        discrepancy,
+      };
+    });
+    
+    // Summary
+    const summary = {
+      total: results.length,
+      matched: results.filter(r => r.match_status === 'matched').length,
+      amount_mismatch: results.filter(r => r.match_status === 'amount_mismatch').length,
+      db_says_completed_node_says_no: results.filter(r => r.match_status === 'db_says_completed_node_says_no').length,
+      db_rejected_but_node_succeeded: results.filter(r => r.match_status === 'db_rejected_but_node_succeeded').length,
+      pending_in_db: results.filter(r => r.match_status === 'pending_in_db').length,
+      no_node_data: results.filter(r => r.match_status === 'no_node_data').length,
+    };
+    
+    res.json({ withdrawals: results, summary, is_real: lightning.isVoltageConfigured() });
+  } catch (err) {
+    console.error('Failed to match withdrawals:', err);
+    res.status(500).json({ error: 'Failed to match withdrawals', message: err.message });
+  }
+});
+
+// Match on-chain deposits: database vs node
+app.get('/api/admin/reconciliation/match/onchain-deposits', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // Get all on-chain deposits from database
+    const dbDeposits = db.prepare(`
+      SELECT od.*, u.username, u.email
+      FROM onchain_deposits od
+      JOIN users u ON od.user_id = u.id
+      ORDER BY od.created_at DESC
+      LIMIT 200
+    `).all();
+    
+    // Get on-chain transactions from node
+    const nodeTransactions = await lightning.getOnchainTransactions();
+    
+    // Create lookup by txid
+    const nodeTxMap = new Map(nodeTransactions.map(tx => [tx.txid, tx]));
+    
+    // Match each database deposit
+    const results = dbDeposits.map(dep => {
+      const nodeTx = nodeTxMap.get(dep.txid);
+      let matchStatus = 'awaiting_deposit';
+      let discrepancy = null;
+      
+      if (dep.txid && nodeTx) {
+        if (dep.credited && nodeTx.confirmations >= 1) {
+          if (dep.amount_sats === nodeTx.amount_sats) {
+            matchStatus = 'matched';
+          } else {
+            matchStatus = 'amount_mismatch';
+            discrepancy = {
+              db_amount: dep.amount_sats,
+              node_amount: nodeTx.amount_sats,
+              difference: dep.amount_sats - nodeTx.amount_sats,
+            };
+          }
+        } else if (dep.credited && nodeTx.confirmations < 1) {
+          matchStatus = 'credited_unconfirmed';
+          discrepancy = { confirmations: nodeTx.confirmations };
+        } else if (!dep.credited && nodeTx.confirmations >= 1) {
+          matchStatus = 'node_confirmed_db_not_credited';
+          discrepancy = { db_credited: dep.credited, node_confirmations: nodeTx.confirmations };
+        } else {
+          matchStatus = 'pending_confirmation';
+          discrepancy = { confirmations: nodeTx.confirmations };
+        }
+      } else if (dep.txid && !nodeTx) {
+        matchStatus = 'txid_not_found_on_node';
+        discrepancy = { db_txid: dep.txid };
+      }
+      
+      return {
+        ...dep,
+        node_tx: nodeTx || null,
+        match_status: matchStatus,
+        discrepancy,
+      };
+    });
+    
+    // Summary
+    const summary = {
+      total: results.length,
+      matched: results.filter(r => r.match_status === 'matched').length,
+      awaiting_deposit: results.filter(r => r.match_status === 'awaiting_deposit').length,
+      pending_confirmation: results.filter(r => r.match_status === 'pending_confirmation').length,
+      credited_unconfirmed: results.filter(r => r.match_status === 'credited_unconfirmed').length,
+      node_confirmed_db_not_credited: results.filter(r => r.match_status === 'node_confirmed_db_not_credited').length,
+      amount_mismatch: results.filter(r => r.match_status === 'amount_mismatch').length,
+    };
+    
+    res.json({ deposits: results, summary, is_real: (await lightning.getOnchainBalance()).is_real });
+  } catch (err) {
+    console.error('Failed to match on-chain deposits:', err);
+    res.status(500).json({ error: 'Failed to match on-chain deposits', message: err.message });
+  }
+});
+
+// Match on-chain withdrawals: database vs node
+app.get('/api/admin/reconciliation/match/onchain-withdrawals', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // Get all on-chain withdrawals from database
+    const dbWithdrawals = db.prepare(`
+      SELECT ow.*, u.username, u.email
+      FROM onchain_withdrawals ow
+      JOIN users u ON ow.user_id = u.id
+      ORDER BY ow.created_at DESC
+      LIMIT 200
+    `).all();
+    
+    // Get on-chain transactions from node
+    const nodeTransactions = await lightning.getOnchainTransactions();
+    
+    // Create lookup by txid (outgoing transactions have negative amounts)
+    const nodeTxMap = new Map(
+      nodeTransactions
+        .filter(tx => tx.amount_sats < 0) // Only outgoing
+        .map(tx => [tx.txid, tx])
+    );
+    
+    // Match each database withdrawal
+    const results = dbWithdrawals.map(wd => {
+      const nodeTx = nodeTxMap.get(wd.txid);
+      let matchStatus = 'pending_approval';
+      let discrepancy = null;
+      
+      if (wd.status === 'completed' && wd.txid) {
+        if (nodeTx) {
+          // Note: node amount is negative, db amount is positive
+          if (wd.amount_sats === Math.abs(nodeTx.amount_sats)) {
+            matchStatus = 'matched';
+          } else {
+            matchStatus = 'amount_mismatch';
+            discrepancy = {
+              db_amount: wd.amount_sats,
+              node_amount: Math.abs(nodeTx.amount_sats),
+              difference: wd.amount_sats - Math.abs(nodeTx.amount_sats),
+            };
+          }
+        } else {
+          matchStatus = 'db_completed_txid_not_on_node';
+          discrepancy = { db_txid: wd.txid };
+        }
+      } else if (wd.status === 'pending') {
+        matchStatus = 'pending_approval';
+      } else if (wd.status === 'rejected') {
+        matchStatus = 'rejected';
+      }
+      
+      return {
+        ...wd,
+        node_tx: nodeTx || null,
+        match_status: matchStatus,
+        discrepancy,
+      };
+    });
+    
+    // Summary
+    const summary = {
+      total: results.length,
+      matched: results.filter(r => r.match_status === 'matched').length,
+      pending_approval: results.filter(r => r.match_status === 'pending_approval').length,
+      rejected: results.filter(r => r.match_status === 'rejected').length,
+      amount_mismatch: results.filter(r => r.match_status === 'amount_mismatch').length,
+      db_completed_txid_not_on_node: results.filter(r => r.match_status === 'db_completed_txid_not_on_node').length,
+    };
+    
+    res.json({ withdrawals: results, summary, is_real: (await lightning.getOnchainBalance()).is_real });
+  } catch (err) {
+    console.error('Failed to match on-chain withdrawals:', err);
+    res.status(500).json({ error: 'Failed to match on-chain withdrawals', message: err.message });
+  }
+});
+
 // ==================== HEALTH CHECK ====================
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

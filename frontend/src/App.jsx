@@ -502,44 +502,76 @@ function LoginModal({ onLogin, onRegister, onGoogleLogin, onLightningLogin, onCl
   );
 }
 
-function WalletModal({ user, onClose, onRefresh }) {
-  // Wallet type toggle: 'lightning' or 'onchain'
-  const [walletType, setWalletType] = useState('lightning');
+// Parse BOLT11 invoice to extract amount in satoshis
+const decodeBolt11Amount = (invoice) => {
+  if (!invoice) return null;
+  const lower = invoice.toLowerCase();
   
+  // BOLT11 format: ln[network][amount][multiplier]1[data]
+  // Network: bc (mainnet), tb (testnet), bcrt (regtest)
+  const match = lower.match(/^ln(bc|tb|bcrt)(\d+)([munp])?1/);
+  if (!match) {
+    // No amount in invoice (zero-amount invoice)
+    return null;
+  }
+  
+  const amount = parseInt(match[2], 10);
+  const multiplier = match[3];
+  
+  // Convert to satoshis based on multiplier
+  // Base unit is millisatoshi for lightning
+  let sats;
+  switch (multiplier) {
+    case 'm': // milli-bitcoin = 0.001 BTC = 100,000 sats
+      sats = amount * 100000;
+      break;
+    case 'u': // micro-bitcoin = 0.000001 BTC = 100 sats
+      sats = amount * 100;
+      break;
+    case 'n': // nano-bitcoin = 0.000000001 BTC = 0.1 sats
+      sats = Math.ceil(amount / 10);
+      break;
+    case 'p': // pico-bitcoin = 0.000000000001 BTC = 0.0001 sats
+      sats = Math.ceil(amount / 10000);
+      break;
+    default: // No multiplier means whole bitcoin
+      sats = amount * 100000000;
+      break;
+  }
+  
+  return sats;
+};
+
+function WalletModal({ user, onClose, onRefresh }) {
   // Lightning deposit state
   const [depositAmount, setDepositAmount] = useState(100000);
   const [invoice, setInvoice] = useState(null);
-  const [depositStatus, setDepositStatus] = useState('idle'); // idle, generating, waiting, checking, credited, error
+  const [depositStatus, setDepositStatus] = useState('idle');
   const [depositError, setDepositError] = useState('');
   
-  // Lightning withdraw state
+  // On-chain deposit state
+  const [onchainAddress, setOnchainAddress] = useState(null);
+  const [onchainDeposits, setOnchainDeposits] = useState([]);
+  const [onchainDepositStatus, setOnchainDepositStatus] = useState('idle');
+  const [onchainDepositError, setOnchainDepositError] = useState('');
+  
+  // Unified withdraw state
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawInvoice, setWithdrawInvoice] = useState('');
-  const [withdrawStatus, setWithdrawStatus] = useState('idle'); // idle, processing, completed, pending, error
+  const [withdrawAddress, setWithdrawAddress] = useState('');
+  const [withdrawStatus, setWithdrawStatus] = useState('idle');
   const [withdrawResult, setWithdrawResult] = useState(null);
   const [withdrawError, setWithdrawError] = useState('');
   const [pendingWithdrawals, setPendingWithdrawals] = useState([]);
+  const [onchainPendingWithdrawals, setOnchainPendingWithdrawals] = useState([]);
   const [cancellingId, setCancellingId] = useState(null);
   const pollingRef = useRef(null);
-  
-  // On-chain state
-  const [onchainAddress, setOnchainAddress] = useState(null);
-  const [onchainDeposits, setOnchainDeposits] = useState([]);
-  const [onchainDepositStatus, setOnchainDepositStatus] = useState('idle'); // idle, generating, ready, checking
-  const [onchainDepositError, setOnchainDepositError] = useState('');
-  const [onchainWithdrawAddress, setOnchainWithdrawAddress] = useState('');
-  const [onchainWithdrawAmount, setOnchainWithdrawAmount] = useState('');
-  const [onchainWithdrawStatus, setOnchainWithdrawStatus] = useState('idle'); // idle, processing, pending, error
-  const [onchainWithdrawError, setOnchainWithdrawError] = useState('');
-  const [onchainWithdrawResult, setOnchainWithdrawResult] = useState(null);
-  const [onchainPendingWithdrawals, setOnchainPendingWithdrawals] = useState([]);
 
-  // Load pending withdrawals on mount
+  // Load data on mount
   useEffect(() => {
     loadPendingWithdrawals();
-    return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
-    };
+    loadOnchainData();
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, []);
 
   const loadPendingWithdrawals = async () => {
@@ -551,149 +583,6 @@ function WalletModal({ user, onClose, onRefresh }) {
     }
   };
 
-  const handleDeposit = async () => {
-    setDepositStatus('generating');
-    setDepositError('');
-    try {
-      const inv = await api.createDeposit(depositAmount);
-      setInvoice(inv);
-      setDepositStatus('waiting');
-      
-      // Start polling for payment status
-      startPollingPayment(inv.payment_hash, inv.is_real);
-    } catch (err) {
-      setDepositError(err.message);
-      setDepositStatus('error');
-    }
-  };
-
-  const startPollingPayment = (paymentHash, isReal) => {
-    // Clear any existing polling
-    if (pollingRef.current) clearInterval(pollingRef.current);
-    
-    // Poll every 3 seconds for real invoices, 2 seconds for mock
-    const pollInterval = isReal ? 3000 : 2000;
-    
-    pollingRef.current = setInterval(async () => {
-      try {
-        setDepositStatus('checking');
-        const result = await api.checkDeposit(paymentHash);
-        
-        if (result.status === 'credited' || result.status === 'already_credited') {
-          clearInterval(pollingRef.current);
-          setDepositStatus('credited');
-          await onRefresh();
-          
-          // Close modal after showing success briefly
-          setTimeout(() => {
-            onClose();
-          }, 2000);
-        } else if (result.status === 'paid') {
-          // This shouldn't happen if credited works, but handle it
-          clearInterval(pollingRef.current);
-          setDepositStatus('credited');
-          await onRefresh();
-        } else {
-          // Still pending, continue polling
-          setDepositStatus('waiting');
-        }
-      } catch (err) {
-        console.error('Polling error:', err);
-        // Don't stop polling on error, just log it
-      }
-    }, pollInterval);
-  };
-
-  const handleSimulatePayment = async () => {
-    try {
-      await api.simulatePayment(invoice.payment_hash);
-      // Polling will pick up the payment
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  const handleCancelDeposit = () => {
-    if (pollingRef.current) clearInterval(pollingRef.current);
-    setInvoice(null);
-    setDepositStatus('idle');
-    setDepositError('');
-  };
-
-  const handleCopyInvoice = () => {
-    if (invoice?.payment_request) {
-      navigator.clipboard.writeText(invoice.payment_request);
-      alert('Invoice copied to clipboard!');
-    }
-  };
-
-  const handleWithdraw = async () => {
-    if (!withdrawAmount || parseInt(withdrawAmount) < 1000) {
-      setWithdrawError('Minimum withdrawal is 1,000 sats');
-      return;
-    }
-    if (!withdrawInvoice) {
-      setWithdrawError('Please paste a Lightning invoice');
-      return;
-    }
-    
-    setWithdrawStatus('processing');
-    setWithdrawError('');
-    setWithdrawResult(null);
-    
-    try {
-      const result = await api.withdraw(withdrawInvoice, parseInt(withdrawAmount));
-      await onRefresh();
-      
-      if (result.status === 'completed') {
-        setWithdrawStatus('completed');
-        setWithdrawResult({
-          type: 'success',
-          message: 'Withdrawal sent successfully!',
-          balance: result.balance_sats,
-          botAdjustment: result.bot_adjustment
-        });
-      } else if (result.status === 'pending') {
-        setWithdrawStatus('pending');
-        setWithdrawResult({
-          type: 'pending',
-          message: 'Withdrawal submitted for admin approval',
-          reason: result.reason,
-          withdrawalId: result.withdrawal_id
-        });
-        // Refresh pending withdrawals list
-        loadPendingWithdrawals();
-      }
-      
-      setWithdrawAmount('');
-      setWithdrawInvoice('');
-    } catch (err) {
-      setWithdrawStatus('error');
-      setWithdrawError(err.message);
-    }
-  };
-
-  const handleCancelWithdrawal = async (withdrawalId) => {
-    if (!confirm('Cancel this pending withdrawal? Funds will be returned to your balance.')) return;
-    
-    setCancellingId(withdrawalId);
-    try {
-      await api.cancelWithdrawal(withdrawalId);
-      await loadPendingWithdrawals();
-      await onRefresh();
-    } catch (err) {
-      alert(err.message);
-    }
-    setCancellingId(null);
-  };
-
-  const resetWithdrawState = () => {
-    setWithdrawStatus('idle');
-    setWithdrawResult(null);
-    setWithdrawError('');
-  };
-
-  // On-chain handlers
   const loadOnchainData = async () => {
     try {
       const [deposits, pending] = await Promise.all([
@@ -707,6 +596,54 @@ function WalletModal({ user, onClose, onRefresh }) {
     }
   };
 
+  // Lightning deposit handlers
+  const handleDeposit = async () => {
+    setDepositStatus('generating');
+    setDepositError('');
+    try {
+      const inv = await api.createDeposit(depositAmount);
+      setInvoice(inv);
+      setDepositStatus('waiting');
+      startPollingPayment(inv.payment_hash, inv.is_real);
+    } catch (err) {
+      setDepositError(err.message);
+      setDepositStatus('error');
+    }
+  };
+
+  const startPollingPayment = (paymentHash, isReal) => {
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    const pollInterval = isReal ? 3000 : 2000;
+    pollingRef.current = setInterval(async () => {
+      try {
+        setDepositStatus('checking');
+        const result = await api.checkDeposit(paymentHash);
+        if (result.status === 'credited' || result.status === 'already_credited' || result.status === 'paid') {
+          clearInterval(pollingRef.current);
+          setDepositStatus('credited');
+          await onRefresh();
+          setTimeout(onClose, 2000);
+        } else {
+          setDepositStatus('waiting');
+        }
+      } catch (err) {
+        console.error('Polling error:', err);
+      }
+    }, pollInterval);
+  };
+
+  const handleSimulatePayment = async () => {
+    try { await api.simulatePayment(invoice.payment_hash); } catch (err) { alert(err.message); }
+  };
+
+  const handleCancelDeposit = () => {
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    setInvoice(null);
+    setDepositStatus('idle');
+    setDepositError('');
+  };
+
+  // On-chain deposit handlers
   const handleOnchainDeposit = async () => {
     setOnchainDepositStatus('generating');
     setOnchainDepositError('');
@@ -736,84 +673,133 @@ function WalletModal({ user, onClose, onRefresh }) {
     }
   };
 
-  const handleOnchainWithdraw = async () => {
-    if (!onchainWithdrawAmount || parseInt(onchainWithdrawAmount) < 10000) {
-      setOnchainWithdrawError('Minimum withdrawal is 10,000 sats');
-      return;
-    }
-    if (!onchainWithdrawAddress) {
-      setOnchainWithdrawError('Please enter a Bitcoin address');
-      return;
-    }
-    
-    setOnchainWithdrawStatus('processing');
-    setOnchainWithdrawError('');
-    
-    try {
-      const result = await api.requestOnchainWithdrawal(onchainWithdrawAddress, parseInt(onchainWithdrawAmount));
-      await onRefresh();
-      setOnchainWithdrawStatus('pending');
-      setOnchainWithdrawResult(result);
-      setOnchainWithdrawAmount('');
-      setOnchainWithdrawAddress('');
-      loadOnchainData();
-    } catch (err) {
-      setOnchainWithdrawStatus('error');
-      setOnchainWithdrawError(err.message);
+  // Handle invoice change - parse and auto-update amount
+  const handleInvoiceChange = (invoiceText) => {
+    setWithdrawInvoice(invoiceText);
+    setWithdrawError('');
+    if (invoiceText) {
+      const parsedAmount = decodeBolt11Amount(invoiceText);
+      if (parsedAmount !== null) {
+        setWithdrawAmount(String(parsedAmount));
+      }
     }
   };
 
+  // Lightning withdrawal handler
+  const handleLightningWithdraw = async () => {
+    if (!withdrawInvoice) {
+      setWithdrawError('Please paste a Lightning invoice');
+      return;
+    }
+    const invoiceAmount = decodeBolt11Amount(withdrawInvoice);
+    const fieldAmount = parseInt(withdrawAmount) || 0;
+    let actualAmount;
+    if (invoiceAmount !== null) {
+      actualAmount = invoiceAmount;
+    } else if (fieldAmount >= 1000) {
+      actualAmount = fieldAmount;
+    } else {
+      setWithdrawError('This invoice has no amount. Please enter an amount first (min 1,000 sats)');
+      return;
+    }
+    if (actualAmount < 1000) {
+      setWithdrawError('Minimum withdrawal is 1,000 sats');
+      return;
+    }
+    setWithdrawStatus('processing');
+    setWithdrawError('');
+    setWithdrawResult(null);
+    try {
+      const result = await api.withdraw(withdrawInvoice, actualAmount);
+      await onRefresh();
+      if (result.status === 'completed') {
+        setWithdrawStatus('completed');
+        setWithdrawResult({ type: 'success', message: 'Withdrawal sent!', balance: result.balance_sats, botAdjustment: result.bot_adjustment });
+      } else if (result.status === 'pending') {
+        setWithdrawStatus('pending');
+        setWithdrawResult({ type: 'pending', message: 'Withdrawal submitted for admin approval', reason: result.reason });
+        loadPendingWithdrawals();
+      }
+      setWithdrawAmount('');
+      setWithdrawInvoice('');
+    } catch (err) {
+      setWithdrawStatus('error');
+      setWithdrawError(err.message);
+    }
+  };
+
+  // On-chain withdrawal handler
+  const handleOnchainWithdraw = async () => {
+    const amount = parseInt(withdrawAmount) || 0;
+    if (amount < 10000) {
+      setWithdrawError('Minimum on-chain withdrawal is 10,000 sats');
+      return;
+    }
+    if (!withdrawAddress) {
+      setWithdrawError('Please enter a Bitcoin address');
+      return;
+    }
+    setWithdrawStatus('processing');
+    setWithdrawError('');
+    setWithdrawResult(null);
+    try {
+      const result = await api.requestOnchainWithdrawal(withdrawAddress, amount);
+      await onRefresh();
+      setWithdrawStatus('pending');
+      setWithdrawResult({ type: 'pending', message: 'On-chain withdrawal submitted for admin approval' });
+      setWithdrawAmount('');
+      setWithdrawAddress('');
+      loadOnchainData();
+    } catch (err) {
+      setWithdrawStatus('error');
+      setWithdrawError(err.message);
+    }
+  };
+
+  const handleCancelWithdrawal = async (withdrawalId) => {
+    if (!confirm('Cancel this pending withdrawal?')) return;
+    setCancellingId(withdrawalId);
+    try {
+      await api.cancelWithdrawal(withdrawalId);
+      await loadPendingWithdrawals();
+      await onRefresh();
+    } catch (err) { alert(err.message); }
+    setCancellingId(null);
+  };
+
   const handleCancelOnchainWithdrawal = async (withdrawalId) => {
-    if (!confirm('Cancel this pending withdrawal? Funds will be returned to your balance.')) return;
-    
+    if (!confirm('Cancel this pending withdrawal?')) return;
     setCancellingId(withdrawalId);
     try {
       await api.cancelOnchainWithdrawal(withdrawalId);
       await loadOnchainData();
       await onRefresh();
-    } catch (err) {
-      alert(err.message);
-    }
+    } catch (err) { alert(err.message); }
     setCancellingId(null);
   };
 
-  // Load on-chain data when switching to on-chain tab
-  useEffect(() => {
-    if (walletType === 'onchain') {
-      loadOnchainData();
-    }
-  }, [walletType]);
+  const resetWithdrawState = () => {
+    setWithdrawStatus('idle');
+    setWithdrawResult(null);
+    setWithdrawError('');
+  };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+      <div className="modal modal-wide wallet-modal" onClick={e => e.stopPropagation()}>
         <h2>💰 Wallet</h2>
         <div className="wallet-balance">
           <span>Balance:</span>
           <strong>{formatSats(user.balance_sats)} sats</strong>
         </div>
 
-        {/* Wallet Type Toggle */}
-        <div className="wallet-type-toggle">
-          <button 
-            className={`wallet-type-btn ${walletType === 'lightning' ? 'active' : ''}`}
-            onClick={() => setWalletType('lightning')}
-          >
-            ⚡ Lightning
-          </button>
-          <button 
-            className={`wallet-type-btn ${walletType === 'onchain' ? 'active' : ''}`}
-            onClick={() => setWalletType('onchain')}
-          >
-            ₿ On-Chain
-          </button>
-        </div>
-
-        {/* LIGHTNING WALLET */}
-        {walletType === 'lightning' && (
-          <>
+        {/* ========== DEPOSITS SECTION ========== */}
         <div className="wallet-section">
-          <h3>⚡ Lightning Deposit</h3>
+          <h3>📥 Deposit</h3>
+          
+          {/* LIGHTNING DEPOSIT */}
+          <div className="deposit-method lightning-deposit">
+            <h4>⚡ Lightning (Instant)</h4>
           {depositStatus === 'idle' || depositStatus === 'generating' || depositStatus === 'error' ? (
             <>
               {depositError && <div className="auth-error">{depositError}</div>}
@@ -885,7 +871,12 @@ function WalletModal({ user, onClose, onRefresh }) {
               </div>
 
               <div className="invoice-actions">
-                <button className="btn btn-outline" onClick={handleCopyInvoice}>
+                <button className="btn btn-outline" onClick={() => {
+                  if (invoice?.payment_request) {
+                    navigator.clipboard.writeText(invoice.payment_request);
+                    alert('Invoice copied!');
+                  }
+                }}>
                   📋 Copy Invoice
                 </button>
                 <a 
@@ -915,51 +906,142 @@ function WalletModal({ user, onClose, onRefresh }) {
               </button>
             </div>
           )}
+          </div>
+
+          {/* ON-CHAIN DEPOSIT */}
+          <div className="deposit-method onchain-deposit">
+            <h4>₿ On-Chain (10+ min)</h4>
+            <p className="method-note">Deposits ≤100k sats credit instantly. Larger need 1 confirmation.</p>
+            
+            {onchainDepositError && <div className="auth-error">{onchainDepositError}</div>}
+            
+            {onchainDepositStatus === 'idle' && (
+              <button className="btn btn-outline" onClick={handleOnchainDeposit}>
+                Generate Bitcoin Address
+              </button>
+            )}
+            
+            {onchainDepositStatus === 'generating' && (
+              <div className="loading-state">
+                <div className="spinner-small"></div>
+                <span>Generating address...</span>
+              </div>
+            )}
+            
+            {(onchainDepositStatus === 'ready' || onchainDepositStatus === 'checking') && onchainAddress && (
+              <div className="onchain-deposit-display">
+                <div className="qr-wrapper qr-small">
+                  <QRCodeSVG 
+                    value={`bitcoin:${onchainAddress.address}`}
+                    size={140}
+                    level="M"
+                    includeMargin={true}
+                  />
+                </div>
+                <div className="address-display">
+                  <code className="btc-address">{onchainAddress.address}</code>
+                  <button 
+                    className="btn btn-small btn-outline"
+                    onClick={() => {
+                      navigator.clipboard.writeText(onchainAddress.address);
+                      alert('Address copied!');
+                    }}
+                  >
+                    📋
+                  </button>
+                </div>
+                <div className="onchain-actions">
+                  <button 
+                    className="btn btn-small btn-outline"
+                    onClick={handleCheckOnchainDeposit}
+                    disabled={onchainDepositStatus === 'checking'}
+                  >
+                    {onchainDepositStatus === 'checking' ? 'Checking...' : '🔄 Check'}
+                  </button>
+                  <button 
+                    className="btn btn-small btn-outline"
+                    onClick={handleOnchainDeposit}
+                  >
+                    New Address
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
+        {/* ========== WITHDRAWALS SECTION ========== */}
         <div className="wallet-section">
-          <h3>Withdraw</h3>
+          <h3>💸 Withdraw</h3>
           
           {withdrawStatus === 'idle' || withdrawStatus === 'error' ? (
             <>
               {withdrawError && <div className="auth-error">{withdrawError}</div>}
-              <div className="withdraw-info">
-                <p className="withdraw-rules">
-                  ⚡ Withdrawals ≤100k sats that don't exceed your deposits are instant.<br/>
-                  Larger withdrawals require admin approval.
-                </p>
+              
+              {/* SHARED AMOUNT */}
+              <div className="withdraw-amount-section">
+                <label>Amount to withdraw:</label>
+                <div className="deposit-amount-input">
+                  <input
+                    type="number"
+                    placeholder="Amount"
+                    value={withdrawAmount}
+                    onChange={e => setWithdrawAmount(e.target.value)}
+                    min="1000"
+                    step="1000"
+                  />
+                  <span className="sats-label">sats</span>
+                </div>
+                <div className="deposit-presets">
+                  <button className="btn btn-small btn-outline" onClick={() => setWithdrawAmount('10000')}>10k</button>
+                  <button className="btn btn-small btn-outline" onClick={() => setWithdrawAmount('50000')}>50k</button>
+                  <button className="btn btn-small btn-outline" onClick={() => setWithdrawAmount('100000')}>100k</button>
+                  <button className="btn btn-small btn-outline" onClick={() => setWithdrawAmount(String(user.balance_sats))}>Max</button>
+                </div>
               </div>
-              <div className="deposit-amount-input">
-                <input
-                  type="number"
-                  placeholder="Amount"
-                  value={withdrawAmount}
-                  onChange={e => setWithdrawAmount(e.target.value)}
-                  min="1000"
-                  step="1000"
-                />
-                <span className="sats-label">sats</span>
+              
+              {/* WITHDRAWAL OPTIONS - SIDE BY SIDE */}
+              <div className="withdraw-options">
+                {/* LIGHTNING WITHDRAWAL */}
+                <div className="withdraw-method">
+                  <h4>⚡ Lightning</h4>
+                  <p className="method-note">Min 1k sats. ≤100k instant if within deposits.</p>
+                  <input
+                    type="text"
+                    placeholder="Paste Lightning invoice (lnbc...)"
+                    value={withdrawInvoice}
+                    onChange={e => handleInvoiceChange(e.target.value)}
+                    className="withdraw-input"
+                  />
+                  <button 
+                    className="btn btn-primary" 
+                    onClick={handleLightningWithdraw}
+                    disabled={!withdrawInvoice}
+                  >
+                    ⚡ Withdraw via Lightning
+                  </button>
+                </div>
+                
+                {/* ON-CHAIN WITHDRAWAL */}
+                <div className="withdraw-method">
+                  <h4>₿ On-Chain</h4>
+                  <p className="method-note">Min 10k sats. All require admin approval.</p>
+                  <input
+                    type="text"
+                    placeholder="Bitcoin address (bc1..., 3..., 1...)"
+                    value={withdrawAddress}
+                    onChange={e => setWithdrawAddress(e.target.value)}
+                    className="withdraw-input"
+                  />
+                  <button 
+                    className="btn btn-outline" 
+                    onClick={handleOnchainWithdraw}
+                    disabled={!withdrawAddress || (parseInt(withdrawAmount) || 0) < 10000}
+                  >
+                    ₿ Withdraw On-Chain
+                  </button>
+                </div>
               </div>
-              <div className="deposit-presets">
-                <button className="btn btn-small btn-outline" onClick={() => setWithdrawAmount('10000')}>10k</button>
-                <button className="btn btn-small btn-outline" onClick={() => setWithdrawAmount('50000')}>50k</button>
-                <button className="btn btn-small btn-outline" onClick={() => setWithdrawAmount('100000')}>100k</button>
-                <button className="btn btn-small btn-outline" onClick={() => setWithdrawAmount(String(user.balance_sats))}>Max</button>
-              </div>
-              <input
-                type="text"
-                placeholder="Paste your Lightning Invoice here"
-                value={withdrawInvoice}
-                onChange={e => setWithdrawInvoice(e.target.value)}
-                className="withdraw-invoice-input"
-              />
-              <button 
-                className="btn btn-primary btn-large" 
-                onClick={handleWithdraw}
-                disabled={!withdrawAmount || !withdrawInvoice || parseInt(withdrawAmount) < 1000}
-              >
-                Withdraw {withdrawAmount ? formatSats(parseInt(withdrawAmount)) : ''} sats
-              </button>
             </>
           ) : withdrawStatus === 'processing' ? (
             <div className="withdraw-processing">
@@ -996,12 +1078,13 @@ function WalletModal({ user, onClose, onRefresh }) {
           ) : null}
 
           {/* Pending Withdrawals List */}
-          {pendingWithdrawals.length > 0 && (
+          {(pendingWithdrawals.length > 0 || onchainPendingWithdrawals.length > 0) && (
             <div className="pending-withdrawals-list">
               <h4>Pending Withdrawals</h4>
               {pendingWithdrawals.map(pw => (
-                <div key={pw.id} className="pending-withdrawal-item">
+                <div key={`ln-${pw.id}`} className="pending-withdrawal-item">
                   <div className="pw-info">
+                    <span className="pw-type">⚡</span>
                     <span className="pw-amount">{formatSats(pw.amount_sats)} sats</span>
                     <span className="pw-date">{new Date(pw.created_at).toLocaleString()}</span>
                   </div>
@@ -1014,186 +1097,25 @@ function WalletModal({ user, onClose, onRefresh }) {
                   </button>
                 </div>
               ))}
+              {onchainPendingWithdrawals.map(pw => (
+                <div key={`oc-${pw.id}`} className="pending-withdrawal-item">
+                  <div className="pw-info">
+                    <span className="pw-type">₿</span>
+                    <span className="pw-amount">{formatSats(pw.amount_sats)} sats</span>
+                    <span className="pw-address" title={pw.dest_address}>{pw.dest_address?.slice(0,8)}...</span>
+                  </div>
+                  <button 
+                    className="btn btn-small btn-danger"
+                    onClick={() => handleCancelOnchainWithdrawal(pw.id)}
+                    disabled={cancellingId === pw.id}
+                  >
+                    {cancellingId === pw.id ? 'Cancelling...' : 'Cancel'}
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </div>
-          </>
-        )}
-
-        {/* ON-CHAIN BITCOIN WALLET */}
-        {walletType === 'onchain' && (
-          <>
-            <div className="wallet-section">
-              <h3>₿ On-Chain Deposit</h3>
-              <p className="onchain-info">
-                Deposits ≤100k sats credit instantly. Larger deposits require 1 confirmation.
-                <br />Minimum: 10,000 sats
-              </p>
-              
-              {onchainDepositError && <div className="auth-error">{onchainDepositError}</div>}
-              
-              {onchainDepositStatus === 'idle' && (
-                <button 
-                  className="btn btn-primary"
-                  onClick={handleOnchainDeposit}
-                >
-                  Generate Deposit Address
-                </button>
-              )}
-              
-              {onchainDepositStatus === 'generating' && (
-                <div className="loading-state">
-                  <div className="spinner"></div>
-                  <p>Generating address...</p>
-                </div>
-              )}
-              
-              {(onchainDepositStatus === 'ready' || onchainDepositStatus === 'checking') && onchainAddress && (
-                <div className="onchain-deposit-address">
-                  <div className="qr-wrapper">
-                    <QRCodeSVG 
-                      value={`bitcoin:${onchainAddress.address}`}
-                      size={180}
-                      level="M"
-                      includeMargin={true}
-                    />
-                  </div>
-                  <div className="address-display">
-                    <code className="btc-address">{onchainAddress.address}</code>
-                    <button 
-                      className="btn btn-small btn-outline"
-                      onClick={() => {
-                        navigator.clipboard.writeText(onchainAddress.address);
-                        alert('Address copied!');
-                      }}
-                    >
-                      📋 Copy
-                    </button>
-                  </div>
-                  <button 
-                    className="btn btn-outline"
-                    onClick={handleCheckOnchainDeposit}
-                    disabled={onchainDepositStatus === 'checking'}
-                  >
-                    {onchainDepositStatus === 'checking' ? 'Checking...' : '🔄 Check for Deposits'}
-                  </button>
-                  <button 
-                    className="btn btn-small btn-outline"
-                    onClick={handleOnchainDeposit}
-                  >
-                    Generate New Address
-                  </button>
-                </div>
-              )}
-              
-              {/* Recent On-Chain Deposits */}
-              {onchainDeposits.length > 0 && (
-                <div className="onchain-deposits-list">
-                  <h4>Recent Deposits</h4>
-                  {onchainDeposits.slice(0, 5).map(d => (
-                    <div key={d.id} className={`onchain-deposit-item ${d.credited ? 'credited' : 'pending'}`}>
-                      <div className="deposit-info">
-                        <span className="deposit-amount">{d.amount_sats ? formatSats(d.amount_sats) + ' sats' : 'Waiting...'}</span>
-                        <span className="deposit-confs">{d.confirmations || 0} confirmations</span>
-                      </div>
-                      <span className={`deposit-status ${d.credited ? 'credited' : 'pending'}`}>
-                        {d.credited ? '✓ Credited' : d.amount_sats ? '⏳ Confirming' : '🔍 Waiting'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="wallet-section">
-              <h3>₿ On-Chain Withdraw</h3>
-              <p className="onchain-info">
-                All on-chain withdrawals require admin approval.
-                <br />First 10 withdrawals: fees paid by platform.
-                <br />Minimum: 10,000 sats
-              </p>
-              
-              {onchainWithdrawError && <div className="auth-error">{onchainWithdrawError}</div>}
-              
-              {onchainWithdrawStatus === 'idle' || onchainWithdrawStatus === 'error' ? (
-                <>
-                  <div className="deposit-amount-input">
-                    <input
-                      type="number"
-                      placeholder="Amount"
-                      value={onchainWithdrawAmount}
-                      onChange={e => setOnchainWithdrawAmount(e.target.value)}
-                      min="10000"
-                      step="1000"
-                    />
-                    <span className="sats-label">sats</span>
-                  </div>
-                  <div className="deposit-presets">
-                    <button className="btn btn-small btn-outline" onClick={() => setOnchainWithdrawAmount('50000')}>50k</button>
-                    <button className="btn btn-small btn-outline" onClick={() => setOnchainWithdrawAmount('100000')}>100k</button>
-                    <button className="btn btn-small btn-outline" onClick={() => setOnchainWithdrawAmount('500000')}>500k</button>
-                    <button className="btn btn-small btn-outline" onClick={() => setOnchainWithdrawAmount(String(user.balance_sats))}>Max</button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Bitcoin address (bc1..., 3..., or 1...)"
-                    value={onchainWithdrawAddress}
-                    onChange={e => setOnchainWithdrawAddress(e.target.value)}
-                    className="withdraw-invoice-input"
-                  />
-                  <button 
-                    className="btn btn-primary btn-large btn-onchain-withdraw"
-                    onClick={handleOnchainWithdraw}
-                    disabled={!onchainWithdrawAmount || !onchainWithdrawAddress || parseInt(onchainWithdrawAmount) < 10000}
-                  >
-                    Request Withdrawal
-                  </button>
-                </>
-              ) : onchainWithdrawStatus === 'processing' ? (
-                <div className="withdraw-processing">
-                  <div className="spinner"></div>
-                  <p>Submitting withdrawal request...</p>
-                </div>
-              ) : onchainWithdrawStatus === 'pending' && onchainWithdrawResult ? (
-                <div className="withdraw-pending">
-                  <div className="pending-icon">⏳</div>
-                  <p>Withdrawal request submitted!</p>
-                  <p className="pending-note">
-                    Your request is pending admin approval.<br/>
-                    You can cancel it below to get your funds back.
-                  </p>
-                  <button className="btn btn-outline" onClick={() => setOnchainWithdrawStatus('idle')}>
-                    Make Another Withdrawal
-                  </button>
-                </div>
-              ) : null}
-
-              {/* Pending On-Chain Withdrawals */}
-              {onchainPendingWithdrawals.length > 0 && (
-                <div className="pending-withdrawals-list">
-                  <h4>Pending On-Chain Withdrawals</h4>
-                  {onchainPendingWithdrawals.map(pw => (
-                    <div key={pw.id} className="pending-withdrawal-item">
-                      <div className="pw-info">
-                        <span className="pw-amount">{formatSats(pw.amount_sats)} sats</span>
-                        <span className="pw-address" title={pw.dest_address}>
-                          {pw.dest_address.slice(0, 12)}...{pw.dest_address.slice(-6)}
-                        </span>
-                      </div>
-                      <button 
-                        className="btn btn-small btn-danger"
-                        onClick={() => handleCancelOnchainWithdrawal(pw.id)}
-                        disabled={cancellingId === pw.id}
-                      >
-                        {cancellingId === pw.id ? 'Cancelling...' : 'Cancel'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
-        )}
 
         <button className="btn btn-outline modal-close" onClick={onClose}>Close</button>
       </div>
@@ -1326,6 +1248,7 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
 function ParticipantBrowser({ grandmasters, onSelectGM }) {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('odds'); // 'odds' or 'rating'
+  const [priceView, setPriceView] = useState('yes'); // 'yes' or 'no'
 
   const filtered = grandmasters
     .filter(gm => gm.name.toLowerCase().includes(search.toLowerCase()))
@@ -1333,10 +1256,21 @@ function ParticipantBrowser({ grandmasters, onSelectGM }) {
       if (sortBy === 'odds') {
         const aOdds = a.attendance_yes_price || 0;
         const bOdds = b.attendance_yes_price || 0;
-        return bOdds - aOdds; // Higher odds first
+        // If viewing NO prices, we want lowest YES (highest NO) first
+        if (priceView === 'no') {
+          return aOdds - bOdds; // Lower YES = Higher NO first
+        }
+        return bOdds - aOdds; // Higher YES first
       }
       return b.fide_rating - a.fide_rating; // Higher rating first
     });
+
+  // Calculate display price based on view mode
+  const getDisplayPrice = (gm) => {
+    if (!gm.attendance_yes_price) return null;
+    if (priceView === 'yes') return gm.attendance_yes_price;
+    return 100 - gm.attendance_yes_price; // NO price is complement
+  };
 
   return (
     <div className="gm-browser">
@@ -1356,28 +1290,50 @@ function ParticipantBrowser({ grandmasters, onSelectGM }) {
           <option value="odds">Sort by Odds</option>
           <option value="rating">Sort by Rating</option>
         </select>
+        <div className="price-view-toggle">
+          <button 
+            className={`price-toggle-btn ${priceView === 'yes' ? 'active' : ''}`}
+            onClick={() => setPriceView('yes')}
+            title="Show YES price (probability they attend)"
+          >
+            YES
+          </button>
+          <button 
+            className={`price-toggle-btn ${priceView === 'no' ? 'active' : ''}`}
+            onClick={() => setPriceView('no')}
+            title="Show NO price (probability they don't attend)"
+          >
+            NO
+          </button>
+        </div>
       </div>
       
       <div className="gm-list">
-        {filtered.map(gm => (
-          <div 
-            key={gm.id} 
-            className="gm-card"
-            onClick={() => onSelectGM(gm, 'attendance')}
-          >
-            <div className="gm-info">
-              <span className="gm-name">{gm.name}</span>
-              <span className="gm-details">{gm.country} • {gm.fide_rating}</span>
+        {filtered.map(gm => {
+          const displayPrice = getDisplayPrice(gm);
+          return (
+            <div 
+              key={gm.id} 
+              className="gm-card"
+              onClick={() => onSelectGM(gm, 'attendance')}
+            >
+              <div className="gm-info">
+                <span className="gm-name">{gm.name}</span>
+                <span className="gm-details">{gm.country} • {gm.fide_rating}</span>
+              </div>
+              <div className="gm-odds">
+                {displayPrice !== null ? (
+                  <span className={`odds-badge odds-${priceView}`}>
+                    <span className="odds-label">{priceView.toUpperCase()}</span>
+                    <span className="odds-value">{displayPrice}%</span>
+                  </span>
+                ) : (
+                  <span className="odds-badge empty">--</span>
+                )}
+              </div>
             </div>
-            <div className="gm-odds">
-              {gm.attendance_yes_price ? (
-                <span className="odds-badge">{gm.attendance_yes_price}%</span>
-              ) : (
-                <span className="odds-badge empty">--</span>
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

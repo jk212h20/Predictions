@@ -90,6 +90,12 @@ export default function BotAdmin({ onClose }) {
   const [onchainBalance, setOnchainBalance] = useState(null);
   const [loadingWithdrawals, setLoadingWithdrawals] = useState(false);
   const [processingWithdrawal, setProcessingWithdrawal] = useState(null);
+  
+  // Reconciliation state
+  const [reconciliationData, setReconciliationData] = useState(null);
+  const [loadingReconciliation, setLoadingReconciliation] = useState(false);
+  const [reconciliationView, setReconciliationView] = useState('overview'); // overview, ln-deposits, ln-withdrawals, onchain-deposits, onchain-withdrawals
+  const [matchData, setMatchData] = useState(null);
 
   useEffect(() => {
     loadAllData();
@@ -438,6 +444,22 @@ export default function BotAdmin({ onClose }) {
             }}
           >
             💸 Withdrawals {(pendingWithdrawals.length + pendingOnchainWithdrawals.length) > 0 && `(${pendingWithdrawals.length + pendingOnchainWithdrawals.length})`}
+          </button>
+          <button 
+            className={activeTab === 'reconciliation' ? 'active' : ''} 
+            onClick={async () => {
+              setActiveTab('reconciliation');
+              setLoadingReconciliation(true);
+              try {
+                const data = await api.getReconciliationOverview();
+                setReconciliationData(data);
+              } catch (err) {
+                console.error('Failed to load reconciliation data:', err);
+              }
+              setLoadingReconciliation(false);
+            }}
+          >
+            🔍 Reconciliation
           </button>
         </div>
 
@@ -1657,6 +1679,383 @@ export default function BotAdmin({ onClose }) {
               >
                 🔄 Refresh All
               </button>
+            </div>
+          )}
+
+          {/* RECONCILIATION TAB */}
+          {activeTab === 'reconciliation' && (
+            <div className="bot-reconciliation">
+              <h3>🔍 Deposit/Withdrawal Reconciliation</h3>
+              <p className="reconciliation-info">
+                Compare database records against LN node and blockchain data to ensure everything matches.
+              </p>
+              
+              {loadingReconciliation ? (
+                <div className="loading">Loading reconciliation data...</div>
+              ) : reconciliationData ? (
+                <>
+                  {/* SOLVENCY OVERVIEW */}
+                  <div className={`solvency-panel ${reconciliationData.reconciliation?.is_solvent ? 'solvent' : 'insolvent'}`}>
+                    <h4>{reconciliationData.reconciliation?.is_solvent ? '✅ SOLVENT' : '⚠️ ATTENTION NEEDED'}</h4>
+                    <div className="solvency-grid">
+                      <div className="solvency-stat">
+                        <label>Total User Balances</label>
+                        <value>{formatSats(reconciliationData.reconciliation?.total_user_balances)} sats</value>
+                      </div>
+                      <div className="solvency-stat">
+                        <label>Pending Withdrawals</label>
+                        <value>{formatSats(reconciliationData.reconciliation?.total_pending_withdrawals)} sats</value>
+                      </div>
+                      <div className="solvency-stat">
+                        <label>Total Node Balance</label>
+                        <value>{formatSats(reconciliationData.reconciliation?.total_node_balance)} sats</value>
+                      </div>
+                    </div>
+                    {!reconciliationData.is_real_node && (
+                      <div className="mock-warning">⚠️ Mock Node Mode - Data not from real LN node</div>
+                    )}
+                  </div>
+
+                  {/* SUB-NAVIGATION */}
+                  <div className="reconciliation-tabs">
+                    <button 
+                      className={reconciliationView === 'overview' ? 'active' : ''}
+                      onClick={() => setReconciliationView('overview')}
+                    >
+                      Overview
+                    </button>
+                    <button 
+                      className={reconciliationView === 'ln-deposits' ? 'active' : ''}
+                      onClick={async () => {
+                        setReconciliationView('ln-deposits');
+                        if (!matchData?.lnDeposits) {
+                          try {
+                            const data = await api.matchDeposits();
+                            setMatchData(prev => ({ ...prev, lnDeposits: data }));
+                          } catch (err) {
+                            console.error('Failed to load LN deposits:', err);
+                          }
+                        }
+                      }}
+                    >
+                      ⚡ LN Deposits
+                    </button>
+                    <button 
+                      className={reconciliationView === 'ln-withdrawals' ? 'active' : ''}
+                      onClick={async () => {
+                        setReconciliationView('ln-withdrawals');
+                        if (!matchData?.lnWithdrawals) {
+                          try {
+                            const data = await api.matchWithdrawals();
+                            setMatchData(prev => ({ ...prev, lnWithdrawals: data }));
+                          } catch (err) {
+                            console.error('Failed to load LN withdrawals:', err);
+                          }
+                        }
+                      }}
+                    >
+                      ⚡ LN Withdrawals
+                    </button>
+                    <button 
+                      className={reconciliationView === 'onchain-deposits' ? 'active' : ''}
+                      onClick={async () => {
+                        setReconciliationView('onchain-deposits');
+                        if (!matchData?.onchainDeposits) {
+                          try {
+                            const data = await api.matchOnchainDeposits();
+                            setMatchData(prev => ({ ...prev, onchainDeposits: data }));
+                          } catch (err) {
+                            console.error('Failed to load on-chain deposits:', err);
+                          }
+                        }
+                      }}
+                    >
+                      ⛓️ On-Chain Deposits
+                    </button>
+                    <button 
+                      className={reconciliationView === 'onchain-withdrawals' ? 'active' : ''}
+                      onClick={async () => {
+                        setReconciliationView('onchain-withdrawals');
+                        if (!matchData?.onchainWithdrawals) {
+                          try {
+                            const data = await api.matchOnchainWithdrawals();
+                            setMatchData(prev => ({ ...prev, onchainWithdrawals: data }));
+                          } catch (err) {
+                            console.error('Failed to load on-chain withdrawals:', err);
+                          }
+                        }
+                      }}
+                    >
+                      ⛓️ On-Chain Withdrawals
+                    </button>
+                  </div>
+
+                  {/* OVERVIEW VIEW */}
+                  {reconciliationView === 'overview' && (
+                    <div className="reconciliation-overview">
+                      <div className="reconciliation-columns">
+                        {/* DATABASE VIEW */}
+                        <div className="recon-column database">
+                          <h4>📊 Database View</h4>
+                          <div className="recon-stats">
+                            <div className="stat-group">
+                              <h5>⚡ Lightning</h5>
+                              <div><label>Deposits Credited:</label> {formatSats(reconciliationData.database?.totals?.total_ln_deposits)} sats</div>
+                              <div><label>Withdrawals Completed:</label> {formatSats(reconciliationData.database?.totals?.total_ln_withdrawals)} sats</div>
+                              <div><label>Pending Withdrawals:</label> {formatSats(reconciliationData.database?.totals?.total_ln_pending)} sats</div>
+                            </div>
+                            <div className="stat-group">
+                              <h5>⛓️ On-Chain</h5>
+                              <div><label>Deposits Credited:</label> {formatSats(reconciliationData.database?.totals?.total_onchain_deposits_credited)} sats</div>
+                              <div><label>Withdrawals Completed:</label> {formatSats(reconciliationData.database?.totals?.total_onchain_withdrawals_completed)} sats</div>
+                              <div><label>Pending Withdrawals:</label> {formatSats(reconciliationData.database?.totals?.total_onchain_pending)} sats</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* NODE VIEW */}
+                        <div className="recon-column node">
+                          <h4>🔌 Node View</h4>
+                          <div className="recon-stats">
+                            <div className="stat-group">
+                              <h5>⚡ Lightning Channels</h5>
+                              <div><label>Outbound (Can Send):</label> {formatSats(reconciliationData.node?.channel_balance?.outbound_sats)} sats</div>
+                              <div><label>Inbound (Can Receive):</label> {formatSats(reconciliationData.node?.channel_balance?.inbound_sats)} sats</div>
+                              <div><label>Active Channels:</label> {reconciliationData.node?.channel_balance?.active_channels || 0}</div>
+                            </div>
+                            <div className="stat-group">
+                              <h5>⛓️ On-Chain Wallet</h5>
+                              <div><label>Confirmed:</label> {formatSats(reconciliationData.node?.onchain_balance?.confirmed_sats)} sats</div>
+                              <div><label>Unconfirmed:</label> {formatSats(reconciliationData.node?.onchain_balance?.unconfirmed_sats)} sats</div>
+                              <div><label>Incoming Total:</label> {formatSats(reconciliationData.node?.totals?.onchain_incoming)} sats</div>
+                              <div><label>Outgoing Total:</label> {formatSats(reconciliationData.node?.totals?.onchain_outgoing)} sats</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* NODE INFO */}
+                      {reconciliationData.node?.info && (
+                        <div className="node-info-panel">
+                          <h5>Node Info</h5>
+                          <div><label>Alias:</label> {reconciliationData.node.info.alias || 'Unknown'}</div>
+                          <div><label>Pubkey:</label> <code>{reconciliationData.node.info.pubkey?.substring(0, 20)}...</code></div>
+                          <div><label>Network:</label> {reconciliationData.node.info.network || 'Unknown'}</div>
+                          <div><label>Real Node:</label> {reconciliationData.node.info.is_real ? '✅ Yes' : '❌ Mock'}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* LN DEPOSITS VIEW */}
+                  {reconciliationView === 'ln-deposits' && matchData?.lnDeposits && (
+                    <div className="match-view">
+                      <h4>⚡ Lightning Deposit Matching</h4>
+                      <div className="match-summary">
+                        <span className="match-stat matched">✅ Matched: {matchData.lnDeposits.summary?.matched || 0}</span>
+                        <span className="match-stat pending">⏳ Pending: {matchData.lnDeposits.summary?.both_pending || 0}</span>
+                        <span className="match-stat mismatch">⚠️ Amount Mismatch: {matchData.lnDeposits.summary?.amount_mismatch || 0}</span>
+                        <span className="match-stat error">❌ DB Paid, Node Not: {matchData.lnDeposits.summary?.db_says_paid_node_says_no || 0}</span>
+                        <span className="match-stat warning">🔍 Node Paid, DB Pending: {matchData.lnDeposits.summary?.node_says_paid_db_pending || 0}</span>
+                        <span className="match-stat no-data">⬜ No Node Data: {matchData.lnDeposits.summary?.no_node_data || 0}</span>
+                      </div>
+                      <div className="match-table-wrapper">
+                        <table className="match-table">
+                          <thead>
+                            <tr>
+                              <th>User</th>
+                              <th>DB Amount</th>
+                              <th>DB Status</th>
+                              <th>Node Settled</th>
+                              <th>Node Amount</th>
+                              <th>Match Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {matchData.lnDeposits.deposits?.slice(0, 50).map((d, i) => (
+                              <tr key={i} className={`match-${d.match_status}`}>
+                                <td>{d.username || d.email || 'Unknown'}</td>
+                                <td>{formatSats(d.amount_sats)}</td>
+                                <td>{d.status}</td>
+                                <td>{d.node_invoice ? (d.node_invoice.settled ? '✅' : '❌') : '-'}</td>
+                                <td>{d.node_invoice ? formatSats(d.node_invoice.amount_paid_sats) : '-'}</td>
+                                <td className={`status-${d.match_status}`}>
+                                  {d.match_status === 'matched' && '✅ Matched'}
+                                  {d.match_status === 'amount_mismatch' && '⚠️ Mismatch'}
+                                  {d.match_status === 'db_says_paid_node_says_no' && '❌ DB Error?'}
+                                  {d.match_status === 'node_says_paid_db_pending' && '🔍 Credit Needed?'}
+                                  {d.match_status === 'both_pending' && '⏳ Pending'}
+                                  {d.match_status === 'no_node_data' && '⬜ No Node Data'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* LN WITHDRAWALS VIEW */}
+                  {reconciliationView === 'ln-withdrawals' && matchData?.lnWithdrawals && (
+                    <div className="match-view">
+                      <h4>⚡ Lightning Withdrawal Matching</h4>
+                      <div className="match-summary">
+                        <span className="match-stat matched">✅ Matched: {matchData.lnWithdrawals.summary?.matched || 0}</span>
+                        <span className="match-stat pending">⏳ Pending: {matchData.lnWithdrawals.summary?.pending_in_db || 0}</span>
+                        <span className="match-stat mismatch">⚠️ Amount Mismatch: {matchData.lnWithdrawals.summary?.amount_mismatch || 0}</span>
+                        <span className="match-stat error">❌ DB Complete, Node Failed: {matchData.lnWithdrawals.summary?.db_says_completed_node_says_no || 0}</span>
+                        <span className="match-stat no-data">⬜ No Node Data: {matchData.lnWithdrawals.summary?.no_node_data || 0}</span>
+                      </div>
+                      <div className="match-table-wrapper">
+                        <table className="match-table">
+                          <thead>
+                            <tr>
+                              <th>User</th>
+                              <th>DB Amount</th>
+                              <th>DB Status</th>
+                              <th>Node Status</th>
+                              <th>Node Amount</th>
+                              <th>Match Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {matchData.lnWithdrawals.withdrawals?.slice(0, 50).map((w, i) => (
+                              <tr key={i} className={`match-${w.match_status}`}>
+                                <td>{w.username || w.email || 'Unknown'}</td>
+                                <td>{formatSats(w.amount_sats)}</td>
+                                <td>{w.status}</td>
+                                <td>{w.node_payment?.status || '-'}</td>
+                                <td>{w.node_payment ? formatSats(w.node_payment.amount_sats) : '-'}</td>
+                                <td className={`status-${w.match_status}`}>
+                                  {w.match_status === 'matched' && '✅ Matched'}
+                                  {w.match_status === 'amount_mismatch' && '⚠️ Mismatch'}
+                                  {w.match_status === 'db_says_completed_node_says_no' && '❌ DB Error?'}
+                                  {w.match_status === 'pending_in_db' && '⏳ Pending'}
+                                  {w.match_status === 'no_node_data' && '⬜ No Node Data'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ON-CHAIN DEPOSITS VIEW */}
+                  {reconciliationView === 'onchain-deposits' && matchData?.onchainDeposits && (
+                    <div className="match-view">
+                      <h4>⛓️ On-Chain Deposit Matching</h4>
+                      <div className="match-summary">
+                        <span className="match-stat matched">✅ Matched: {matchData.onchainDeposits.summary?.matched || 0}</span>
+                        <span className="match-stat pending">⏳ Awaiting: {matchData.onchainDeposits.summary?.awaiting_deposit || 0}</span>
+                        <span className="match-stat warning">🔄 Pending Conf: {matchData.onchainDeposits.summary?.pending_confirmation || 0}</span>
+                        <span className="match-stat error">❌ Node Confirmed, DB Not: {matchData.onchainDeposits.summary?.node_confirmed_db_not_credited || 0}</span>
+                        <span className="match-stat mismatch">⚠️ Amount Mismatch: {matchData.onchainDeposits.summary?.amount_mismatch || 0}</span>
+                      </div>
+                      <div className="match-table-wrapper">
+                        <table className="match-table">
+                          <thead>
+                            <tr>
+                              <th>User</th>
+                              <th>Address</th>
+                              <th>DB Amount</th>
+                              <th>DB Credited</th>
+                              <th>Node Confs</th>
+                              <th>Match Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {matchData.onchainDeposits.deposits?.slice(0, 50).map((d, i) => (
+                              <tr key={i} className={`match-${d.match_status}`}>
+                                <td>{d.username || d.email || 'Unknown'}</td>
+                                <td><code>{d.address?.substring(0, 12)}...</code></td>
+                                <td>{formatSats(d.amount_sats)}</td>
+                                <td>{d.credited ? '✅' : '❌'}</td>
+                                <td>{d.node_tx?.confirmations ?? '-'}</td>
+                                <td className={`status-${d.match_status}`}>
+                                  {d.match_status === 'matched' && '✅ Matched'}
+                                  {d.match_status === 'awaiting_deposit' && '⏳ Awaiting'}
+                                  {d.match_status === 'pending_confirmation' && '🔄 Confirming'}
+                                  {d.match_status === 'node_confirmed_db_not_credited' && '❌ Credit Needed!'}
+                                  {d.match_status === 'amount_mismatch' && '⚠️ Mismatch'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ON-CHAIN WITHDRAWALS VIEW */}
+                  {reconciliationView === 'onchain-withdrawals' && matchData?.onchainWithdrawals && (
+                    <div className="match-view">
+                      <h4>⛓️ On-Chain Withdrawal Matching</h4>
+                      <div className="match-summary">
+                        <span className="match-stat matched">✅ Matched: {matchData.onchainWithdrawals.summary?.matched || 0}</span>
+                        <span className="match-stat pending">⏳ Pending: {matchData.onchainWithdrawals.summary?.pending_approval || 0}</span>
+                        <span className="match-stat rejected">🚫 Rejected: {matchData.onchainWithdrawals.summary?.rejected || 0}</span>
+                        <span className="match-stat mismatch">⚠️ Amount Mismatch: {matchData.onchainWithdrawals.summary?.amount_mismatch || 0}</span>
+                        <span className="match-stat error">❌ TXID Not Found: {matchData.onchainWithdrawals.summary?.db_completed_txid_not_on_node || 0}</span>
+                      </div>
+                      <div className="match-table-wrapper">
+                        <table className="match-table">
+                          <thead>
+                            <tr>
+                              <th>User</th>
+                              <th>Address</th>
+                              <th>DB Amount</th>
+                              <th>DB Status</th>
+                              <th>TXID</th>
+                              <th>Match Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {matchData.onchainWithdrawals.withdrawals?.slice(0, 50).map((w, i) => (
+                              <tr key={i} className={`match-${w.match_status}`}>
+                                <td>{w.username || w.email || 'Unknown'}</td>
+                                <td><code>{w.dest_address?.substring(0, 12)}...</code></td>
+                                <td>{formatSats(w.amount_sats)}</td>
+                                <td>{w.status}</td>
+                                <td>{w.txid ? <code>{w.txid.substring(0, 10)}...</code> : '-'}</td>
+                                <td className={`status-${w.match_status}`}>
+                                  {w.match_status === 'matched' && '✅ Matched'}
+                                  {w.match_status === 'pending_approval' && '⏳ Pending'}
+                                  {w.match_status === 'rejected' && '🚫 Rejected'}
+                                  {w.match_status === 'amount_mismatch' && '⚠️ Mismatch'}
+                                  {w.match_status === 'db_completed_txid_not_on_node' && '❌ TXID Missing'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  <button 
+                    className="btn btn-outline"
+                    onClick={async () => {
+                      setLoadingReconciliation(true);
+                      setMatchData(null);
+                      try {
+                        const data = await api.getReconciliationOverview();
+                        setReconciliationData(data);
+                      } catch (err) {
+                        console.error('Failed to refresh:', err);
+                      }
+                      setLoadingReconciliation(false);
+                    }}
+                    style={{ marginTop: '1rem' }}
+                  >
+                    🔄 Refresh All
+                  </button>
+                </>
+              ) : (
+                <div className="empty-state">
+                  <p>Click the Reconciliation tab to load data.</p>
+                </div>
+              )}
             </div>
           )}
         </div>
