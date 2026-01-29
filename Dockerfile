@@ -30,7 +30,7 @@ WORKDIR /app
 
 # Copy backend dependencies and rebuild native modules for this exact image
 COPY backend/package*.json ./backend/
-RUN cd backend && npm ci --only=production
+RUN cd backend && npm ci --omit=dev
 
 # Copy backend source
 COPY backend/*.js ./backend/
