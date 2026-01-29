@@ -258,6 +258,29 @@ function updateShape(id, params) {
 const TIER_ORDER = ['S', 'A+', 'A', 'B+', 'B', 'C', 'D'];
 
 /**
+ * Default curve centers by tier (where to concentrate offers)
+ * Lower center = more offers at low prices (for unlikely players)
+ * Higher center = more offers at higher prices (for likely players)
+ */
+const TIER_CURVE_CENTERS = {
+  'S': 35,    // Very likely - center around 35%
+  'A+': 28,   // Likely - center around 28%
+  'A': 22,    // Moderately likely - center around 22%
+  'B+': 18,   // Above average - center around 18%
+  'B': 14,    // Average - center around 14%
+  'C': 10,    // Below average - center around 10%
+  'D': 7,     // Unlikely - center around 7%
+  null: 12    // Unknown/unscored - default to 12%
+};
+
+/**
+ * Get the default curve center for a tier
+ */
+function getDefaultCurveCenter(tier) {
+  return TIER_CURVE_CENTERS[tier] || TIER_CURVE_CENTERS[null];
+}
+
+/**
  * Get all tiers with their markets and weights
  */
 function getTierSummary() {
@@ -452,10 +475,17 @@ function initializeWeightsFromScores() {
 /**
  * Initialize weights for all attendance markets
  * Each market gets equal weight, summing to 1.0
+ * 
+ * FIXED: Now includes ALL markets, even those without likelihood_score.
+ * Markets without scores get a default tier-based curve_center.
  */
 function initializeMarketWeights() {
+  // Get ALL attendance markets with their GM info (including those without scores)
   const markets = db.prepare(`
-    SELECT id FROM markets WHERE type = 'attendance' AND status = 'open'
+    SELECT m.id, g.likelihood_score, g.tier
+    FROM markets m
+    LEFT JOIN grandmasters g ON m.grandmaster_id = g.id
+    WHERE m.type = 'attendance' AND m.status = 'open'
   `).all();
   
   if (markets.length === 0) return;
@@ -463,13 +493,28 @@ function initializeMarketWeights() {
   const defaultWeight = 1.0 / markets.length;
   
   for (const market of markets) {
-    db.prepare(`
-      INSERT OR IGNORE INTO bot_market_weights (id, market_id, weight, relative_odds)
-      VALUES (?, ?, ?, 1.0)
-    `).run(uuidv4(), market.id, defaultWeight);
+    // Check if weight already exists
+    const existing = db.prepare(`SELECT * FROM bot_market_weights WHERE market_id = ?`).get(market.id);
+    
+    // Calculate the tier-based curve center (where to concentrate offers)
+    const curveCenter = getDefaultCurveCenter(market.tier);
+    
+    if (!existing) {
+      // New market - assign equal weight and tier-based curve center
+      db.prepare(`
+        INSERT INTO bot_market_weights (id, market_id, weight, relative_odds, curve_center)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(uuidv4(), market.id, defaultWeight, market.likelihood_score || 1, curveCenter);
+    } else if (existing.curve_center === null) {
+      // Existing weight but no curve_center - set the default
+      db.prepare(`
+        UPDATE bot_market_weights SET curve_center = ?, updated_at = datetime('now')
+        WHERE market_id = ?
+      `).run(curveCenter, market.id);
+    }
   }
   
-  // Normalize to ensure sum = 1.0
+  // Normalize to ensure sum = 1.0 (this will adjust for new markets)
   normalizeWeights();
 }
 
@@ -859,15 +904,22 @@ function setMarketOverride(marketId, overrideType, options = {}) {
 }
 
 /**
- * Get effective curve for a specific market (applying overrides and global multiplier)
+ * Get effective curve for a specific market (applying overrides, curve_center skew, and global multiplier)
  * 
- * FIXED: Now uses actual budget (user balance) instead of hardcoded total_liquidity
+ * NOW WITH CURVE SKEW: Each market can have a custom curve_center that shifts
+ * where offers are concentrated. Lower curve_center = more offers at low prices (unlikely players).
+ * 
+ * IMPORTANT: All calculations are done in WHOLE SHARES first, then converted to sats.
+ * 1 share = 1000 sats payout. Orders must always be for whole shares.
  * 
  * @param {string} marketId - Market to get curve for
  * @param {string} curveType - 'buy' or 'sell'
  * @param {number|null} totalBudget - Total budget to distribute (if null, uses config.total_liquidity)
  */
 function getEffectiveCurve(marketId, curveType = 'buy', totalBudget = null) {
+  const SATS_PER_SHARE = 1000;
+  const MIN_SHARES = 1; // Minimum 1 share per order
+  
   const config = getConfig();
   const market = db.prepare('SELECT * FROM markets WHERE id = ?').get(marketId);
   if (!market) return null;
@@ -877,16 +929,6 @@ function getEffectiveCurve(marketId, curveType = 'buy', totalBudget = null) {
   // Check if disabled
   if (override?.override_type === 'disable') {
     return null;
-  }
-  
-  // Get the shape (normalized proportions that sum to 1.0)
-  let shape;
-  if (override?.override_type === 'replace' && override.custom_curve) {
-    shape = JSON.parse(override.custom_curve);
-  } else {
-    // Get default shape from library
-    const defaultShape = getDefaultShape();
-    shape = defaultShape.normalized_points;
   }
   
   // Get market weight (what fraction of budget goes to this market)
@@ -905,26 +947,162 @@ function getEffectiveCurve(marketId, curveType = 'buy', totalBudget = null) {
     return null;
   }
   
+  // Get the shape (normalized proportions that sum to 1.0)
+  let shape;
+  if (override?.override_type === 'replace' && override.custom_curve) {
+    shape = JSON.parse(override.custom_curve);
+  } else {
+    // Get default shape from library
+    const defaultShape = getDefaultShape();
+    
+    // Get market-specific curve center for odds skew
+    // curve_center determines where to concentrate offers (5-50)
+    const curveCenter = weightRecord?.curve_center || getDefaultCurveCenter(null);
+    
+    // If the default shape is a bell curve, shift it based on curve_center
+    // Otherwise use the shape as-is
+    if (defaultShape.shape_type === 'bell') {
+      // Regenerate bell curve centered at this market's curve_center
+      shape = generateBellShape(curveCenter, defaultShape.params?.sigma || 12);
+    } else {
+      // For other shapes, use as-is (they already favor low prices)
+      shape = defaultShape.normalized_points;
+    }
+  }
+  
   // Apply market-specific multiplier
   const marketMultiplier = override?.override_type === 'multiply' ? override.multiplier : 1.0;
   
   // Use provided budget or fall back to config.total_liquidity
   const baseBudget = totalBudget !== null ? totalBudget : config.total_liquidity;
   
-  // Calculate budget for this market
+  // Calculate budget for this market (in sats)
   // baseBudget × market_weight × market_multiplier
   // Note: global_multiplier and pullback already applied at deployment level when calculating totalBudget
-  const marketBudget = baseBudget * marketWeight * (totalBudget !== null ? 1.0 : config.global_multiplier * marketMultiplier);
+  const marketBudgetSats = baseBudget * marketWeight * (totalBudget !== null ? 1.0 : config.global_multiplier * marketMultiplier);
   
-  // Distribute budget according to shape weights
-  return shape.map(point => {
-    // Each point has a price and a weight (proportion)
-    const amount = Math.floor(marketBudget * point.weight);
-    return {
+  // Convert to total shares this market can offer
+  // CRITICAL: Calculate in shares first to ensure whole numbers
+  const totalSharesForMarket = Math.floor(marketBudgetSats / SATS_PER_SHARE);
+  
+  if (totalSharesForMarket < MIN_SHARES) {
+    return null; // Not enough budget for even 1 share
+  }
+  
+  // Distribute shares according to shape weights using largest remainder method
+  // This ensures we get whole shares that sum correctly
+  const rawShares = shape.map(point => ({
+    price: point.price,
+    rawShare: totalSharesForMarket * point.weight,
+  }));
+  
+  // Floor all values first
+  let allocatedShares = rawShares.map(p => ({
+    price: p.price,
+    shares: Math.floor(p.rawShare),
+    remainder: p.rawShare - Math.floor(p.rawShare)
+  }));
+  
+  // Calculate how many shares are left to distribute
+  const totalAllocated = allocatedShares.reduce((sum, p) => sum + p.shares, 0);
+  let remainingShares = totalSharesForMarket - totalAllocated;
+  
+  // Distribute remaining shares to items with largest remainders
+  if (remainingShares > 0) {
+    // Sort by remainder descending
+    const sortedByRemainder = [...allocatedShares].sort((a, b) => b.remainder - a.remainder);
+    for (let i = 0; i < remainingShares && i < sortedByRemainder.length; i++) {
+      // Find this item in original array and increment
+      const idx = allocatedShares.findIndex(p => p.price === sortedByRemainder[i].price);
+      if (idx >= 0) {
+        allocatedShares[idx].shares++;
+      }
+    }
+  }
+  
+  // Convert shares to amount_sats and filter out zero-share entries
+  return allocatedShares
+    .filter(point => point.shares >= MIN_SHARES)
+    .map(point => ({
       price: point.price,
-      amount: amount
-    };
-  }).filter(point => point.amount >= 100); // Min 100 sats per order
+      amount: point.shares * SATS_PER_SHARE // Always a multiple of 1000
+    }));
+}
+
+/**
+ * Get curve center for a market (where to concentrate offers)
+ * @param {string} marketId - Market ID
+ * @returns {number|null} Curve center (5-50) or null if not set
+ */
+function getCurveCenter(marketId) {
+  const weight = getMarketWeight(marketId);
+  return weight?.curve_center || null;
+}
+
+/**
+ * Set curve center for a market (manual override)
+ * @param {string} marketId - Market ID
+ * @param {number} curveCenter - Where to center curve (5-50), or null to reset to tier default
+ */
+function setCurveCenter(marketId, curveCenter) {
+  // Validate range
+  if (curveCenter !== null && (curveCenter < 5 || curveCenter > 50)) {
+    throw new Error('Curve center must be between 5 and 50');
+  }
+  
+  // Get market's tier for fallback
+  const marketInfo = db.prepare(`
+    SELECT g.tier FROM markets m
+    LEFT JOIN grandmasters g ON m.grandmaster_id = g.id
+    WHERE m.id = ?
+  `).get(marketId);
+  
+  // If resetting to null, use tier default
+  const finalValue = curveCenter !== null ? curveCenter : getDefaultCurveCenter(marketInfo?.tier);
+  
+  const existing = db.prepare(`SELECT * FROM bot_market_weights WHERE market_id = ?`).get(marketId);
+  
+  if (existing) {
+    db.prepare(`
+      UPDATE bot_market_weights SET curve_center = ?, updated_at = datetime('now')
+      WHERE market_id = ?
+    `).run(finalValue, marketId);
+  } else {
+    // Create weight record if doesn't exist
+    initializeMarketWeights();
+    db.prepare(`
+      UPDATE bot_market_weights SET curve_center = ?, updated_at = datetime('now')
+      WHERE market_id = ?
+    `).run(finalValue, marketId);
+  }
+  
+  return finalValue;
+}
+
+/**
+ * Reset all curve centers to tier defaults
+ */
+function resetAllCurveCenters() {
+  const markets = db.prepare(`
+    SELECT m.id, g.tier FROM markets m
+    LEFT JOIN grandmasters g ON m.grandmaster_id = g.id
+    WHERE m.type = 'attendance' AND m.status = 'open'
+  `).all();
+  
+  const update = db.prepare(`
+    UPDATE bot_market_weights SET curve_center = ?, updated_at = datetime('now')
+    WHERE market_id = ?
+  `);
+  
+  const reset = db.transaction(() => {
+    for (const market of markets) {
+      const defaultCenter = getDefaultCurveCenter(market.tier);
+      update.run(defaultCenter, market.id);
+    }
+  });
+  
+  reset();
+  return markets.length;
 }
 
 // ==================== EXPOSURE & RISK TRACKING ====================
@@ -1449,8 +1627,15 @@ function cancelAllUserOrders(userId) {
  * IMPORTANT: Pullback is applied to all OTHER markets, NOT the market where
  * the action occurred. The active market already lost liquidity from the fills,
  * so we don't want to "double penalize" it.
+ * 
+ * WHOLE SHARES: All reductions are done in whole shares (1 share = 1000 sats).
+ * We calculate the target reduction in shares, then remove whole shares.
+ * If pullback_ratio = 0, we cancel ALL remaining orders.
  */
 function atomicPullback(filledAmount, marketId) {
+  const SATS_PER_SHARE = 1000;
+  const MIN_SHARES = 1;
+  
   const config = getConfig();
   if (!config.is_active) return { pullbackTriggered: false };
   
@@ -1477,35 +1662,73 @@ function atomicPullback(filledAmount, marketId) {
   
   let ordersModified = 0;
   let totalReduction = 0;
+  let totalRefund = 0;
   
-  for (const order of botOrders) {
-    const remaining = order.amount_sats - order.filled_sats;
-    const newRemaining = Math.floor(remaining * pullbackRatio);
-    const reduction = remaining - newRemaining;
-    
-    if (reduction > 0) {
-      // Reduce the order
-      const newAmount = order.filled_sats + newRemaining;
-      
-      if (newRemaining < 100) {
+  // SPECIAL CASE: If pullback_ratio = 0, cancel ALL remaining orders
+  if (pullbackRatio <= 0) {
+    for (const order of botOrders) {
+      const remaining = order.amount_sats - order.filled_sats;
+      if (remaining > 0) {
         // Cancel order entirely
         db.prepare('UPDATE orders SET status = ?, updated_at = datetime(\'now\') WHERE id = ?')
           .run('cancelled', order.id);
-      } else {
-        db.prepare('UPDATE orders SET amount_sats = ?, updated_at = datetime(\'now\') WHERE id = ?')
-          .run(newAmount, order.id);
+        
+        // Refund the full remaining cost
+        const refund = order.side === 'no'
+          ? Math.ceil(remaining * (100 - order.price_cents) / 100)
+          : Math.ceil(remaining * order.price_cents / 100);
+        
+        totalRefund += refund;
+        totalReduction += remaining;
+        ordersModified++;
       }
-      
-      // Refund the reduction
-      const refund = order.side === 'no'
-        ? Math.ceil(reduction * (100 - order.price_cents) / 100)
-        : Math.ceil(reduction * order.price_cents / 100);
-      
+    }
+    
+    // Single refund for all cancelled orders
+    if (totalRefund > 0) {
       db.prepare('UPDATE users SET balance_sats = balance_sats + ? WHERE id = ?')
-        .run(refund, config.bot_user_id);
+        .run(totalRefund, config.bot_user_id);
+    }
+  } else {
+    // Proportional reduction - work in whole shares
+    for (const order of botOrders) {
+      const remainingSats = order.amount_sats - order.filled_sats;
+      const remainingShares = Math.floor(remainingSats / SATS_PER_SHARE);
       
-      totalReduction += reduction;
-      ordersModified++;
+      // Calculate target shares after pullback
+      const targetShares = Math.floor(remainingShares * pullbackRatio);
+      const sharesToRemove = remainingShares - targetShares;
+      
+      if (sharesToRemove > 0) {
+        const reductionSats = sharesToRemove * SATS_PER_SHARE;
+        const newRemainingSats = remainingSats - reductionSats;
+        const newAmount = order.filled_sats + newRemainingSats;
+        
+        if (targetShares < MIN_SHARES) {
+          // Cancel order entirely if below minimum
+          db.prepare('UPDATE orders SET status = ?, updated_at = datetime(\'now\') WHERE id = ?')
+            .run('cancelled', order.id);
+        } else {
+          // Reduce by whole shares
+          db.prepare('UPDATE orders SET amount_sats = ?, updated_at = datetime(\'now\') WHERE id = ?')
+            .run(newAmount, order.id);
+        }
+        
+        // Refund the reduction cost
+        const refund = order.side === 'no'
+          ? Math.ceil(reductionSats * (100 - order.price_cents) / 100)
+          : Math.ceil(reductionSats * order.price_cents / 100);
+        
+        totalRefund += refund;
+        totalReduction += reductionSats;
+        ordersModified++;
+      }
+    }
+    
+    // Single refund for all reductions
+    if (totalRefund > 0) {
+      db.prepare('UPDATE users SET balance_sats = balance_sats + ? WHERE id = ?')
+        .run(totalRefund, config.bot_user_id);
     }
   }
   
@@ -1520,6 +1743,7 @@ function atomicPullback(filledAmount, marketId) {
     pullbackRatio,
     ordersModified,
     totalReduction,
+    totalRefund,
     excludedMarket: marketId // The market where action occurred (not affected by pullback)
   }), exposureUpdate.oldExposure, newExposure);
   
@@ -1530,7 +1754,149 @@ function atomicPullback(filledAmount, marketId) {
     exposure: newExposure,
     pullbackRatio,
     ordersModified,
-    totalReduction
+    totalReduction,
+    totalRefund
+  };
+}
+
+// ==================== AUTO-MATCH DETECTION ====================
+
+/**
+ * Calculate potential auto-matches for a proposed NO order
+ * When placing a NO order at price P, it will match with existing YES orders 
+ * where YES price >= (100 - P)
+ * 
+ * @param {string} marketId - Market to check
+ * @param {number} noPrice - Price of the NO order (this is the YES price the NO is offering)
+ * @param {number} amount - Amount of the NO order in sats
+ * @returns {object} Match details
+ */
+function calculatePotentialMatch(marketId, noPrice, amount) {
+  // A NO order at price P matches YES orders where YES price >= (100 - P)
+  // But actually in our system, NO@P matches YES orders with price >= P
+  // Because NO@40 means "I'll take NO at 40% YES price" 
+  // and matches with YES@40+ orders
+  const minYesPrice = noPrice;
+  
+  // Find existing YES orders that would match
+  const matchingYesOrders = db.prepare(`
+    SELECT * FROM orders
+    WHERE market_id = ? 
+      AND side = 'yes' 
+      AND status IN ('open', 'partial')
+      AND price_cents >= ?
+    ORDER BY price_cents DESC, created_at ASC
+  `).all(marketId, minYesPrice);
+  
+  if (matchingYesOrders.length === 0) {
+    return {
+      would_match: false,
+      match_amount: 0,
+      match_cost: 0,
+      matching_orders: []
+    };
+  }
+  
+  // Calculate how much would match
+  let remainingAmount = amount;
+  let totalMatchAmount = 0;
+  let totalMatchCost = 0;
+  const matchingOrderDetails = [];
+  
+  for (const yesOrder of matchingYesOrders) {
+    if (remainingAmount <= 0) break;
+    
+    const available = yesOrder.amount_sats - yesOrder.filled_sats;
+    const matchAmount = Math.min(remainingAmount, available);
+    
+    // Cost to the NO side for this match
+    // NO pays (100 - trade_price)% where trade_price is the resting order's price
+    const tradePrice = yesOrder.price_cents;
+    const matchCost = Math.ceil(matchAmount * (100 - tradePrice) / 100);
+    
+    totalMatchAmount += matchAmount;
+    totalMatchCost += matchCost;
+    remainingAmount -= matchAmount;
+    
+    matchingOrderDetails.push({
+      order_id: yesOrder.id,
+      yes_price: yesOrder.price_cents,
+      available_amount: available,
+      match_amount: matchAmount,
+      match_cost: matchCost
+    });
+  }
+  
+  return {
+    would_match: totalMatchAmount > 0,
+    match_amount: totalMatchAmount,
+    match_cost: totalMatchCost,
+    remaining_as_order: amount - totalMatchAmount,
+    matching_orders: matchingOrderDetails
+  };
+}
+
+/**
+ * Calculate all potential auto-matches for a deployment preview
+ * This analyzes each proposed order and checks if it would immediately match
+ * 
+ * @param {Array} marketPreviews - Array of market preview objects with orders
+ * @returns {object} Auto-match summary
+ */
+function calculateAutoMatchesForDeployment(marketPreviews) {
+  const autoMatches = [];
+  let totalMatchAmount = 0;
+  let totalMatchCost = 0;
+  let marketsWithMatches = 0;
+  
+  for (const market of marketPreviews) {
+    if (market.disabled || !market.orders || market.orders.length === 0) {
+      continue;
+    }
+    
+    const marketMatches = [];
+    let marketMatchAmount = 0;
+    let marketMatchCost = 0;
+    
+    for (const order of market.orders) {
+      const match = calculatePotentialMatch(market.market_id, order.price, order.amount);
+      
+      if (match.would_match) {
+        marketMatches.push({
+          order_price: order.price,
+          order_amount: order.amount,
+          match_amount: match.match_amount,
+          match_cost: match.match_cost,
+          remaining: match.remaining_as_order,
+          matching_orders: match.matching_orders
+        });
+        
+        marketMatchAmount += match.match_amount;
+        marketMatchCost += match.match_cost;
+      }
+    }
+    
+    if (marketMatches.length > 0) {
+      autoMatches.push({
+        market_id: market.market_id,
+        grandmaster_name: market.grandmaster_name,
+        matches: marketMatches,
+        total_match_amount: marketMatchAmount,
+        total_match_cost: marketMatchCost
+      });
+      
+      totalMatchAmount += marketMatchAmount;
+      totalMatchCost += marketMatchCost;
+      marketsWithMatches++;
+    }
+  }
+  
+  return {
+    has_auto_matches: autoMatches.length > 0,
+    markets_with_matches: marketsWithMatches,
+    total_match_amount: totalMatchAmount,
+    total_match_cost: totalMatchCost,
+    matches_by_market: autoMatches
   };
 }
 
@@ -1660,6 +2026,9 @@ function getDeploymentPreview(userId) {
   // Check if user has sufficient balance
   const hasBalance = effectiveBalance >= totalCost;
   
+  // Calculate auto-matches - which orders would immediately match existing YES orders
+  const autoMatchData = calculateAutoMatchesForDeployment(marketPreviews);
+  
   return {
     success: true,
     user_balance: user.balance_sats,
@@ -1676,6 +2045,8 @@ function getDeploymentPreview(userId) {
     has_sufficient_balance: hasBalance,
     shortfall: hasBalance ? 0 : totalCost - effectiveBalance,
     markets: marketPreviews,
+    // Auto-match warning data
+    auto_matches: autoMatchData,
     config: {
       max_acceptable_loss: config.max_acceptable_loss,
       global_multiplier: config.global_multiplier,
@@ -1857,10 +2228,12 @@ module.exports = {
   
   // Tier Management
   TIER_ORDER,
+  TIER_CURVE_CENTERS,
   getTierSummary,
   getMarketsByTier,
   setTierBudget,
   initializeWeightsFromScores,
+  getDefaultCurveCenter,
   
   // Market Weights (Auto-Rebalancing)
   initializeMarketWeights,
@@ -1871,6 +2244,11 @@ module.exports = {
   setRelativeOdds,
   applyRelativeOdds,
   setWeightLock,
+  
+  // Curve Center (Per-market odds skew)
+  getCurveCenter,
+  setCurveCenter,
+  resetAllCurveCenters,
   
   // Legacy Curves (for backward compatibility)
   getBuyCurve,

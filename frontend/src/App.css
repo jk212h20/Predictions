@@ -6256,3 +6256,153 @@ tr.status-lost {
   }
 }
 
+/* ==================== AUTO-MATCH WARNING ==================== */
+.auto-match-warning {
+  background: rgba(248, 81, 73, 0.1);
+  border: 2px solid var(--no-color);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.auto-match-warning h4 {
+  color: var(--no-color);
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.auto-match-intro {
+  color: var(--text);
+  font-size: 0.875rem;
+  margin-bottom: 1rem;
+}
+
+.auto-match-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+}
+
+.auto-match-summary .match-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  text-align: center;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.auto-match-summary .match-stat label {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 0;
+}
+
+.auto-match-summary .match-stat value {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.auto-match-summary .match-stat.critical value {
+  color: var(--no-color);
+}
+
+.auto-match-details {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+
+.auto-match-details summary {
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.auto-match-details summary:hover {
+  background: var(--bg-card-hover);
+}
+
+.auto-match-details[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.auto-match-markets {
+  padding: 0.75rem;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.auto-match-market {
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.auto-match-market:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.auto-match-market .market-name {
+  font-weight: 600;
+  color: var(--text-bright);
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.auto-match-market .mini-table {
+  font-size: 0.75rem;
+}
+
+.auto-match-market .mini-table th {
+  font-size: 0.625rem;
+  padding: 0.375rem;
+}
+
+.auto-match-market .mini-table td {
+  padding: 0.375rem;
+}
+
+.auto-match-market .mini-table td.cost {
+  color: var(--no-color);
+  font-weight: 600;
+}
+
+.auto-match-market .mini-table tfoot td {
+  background: var(--bg-card);
+  font-weight: 600;
+}
+
+.auto-match-impact {
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  color: var(--text);
+}
+
+.auto-match-impact p {
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .auto-match-summary {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+}
+

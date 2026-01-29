@@ -1625,17 +1625,28 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               <div className="ob-header-row">
                 <span>Price</span>
                 <span>Shares</span>
+                <span>Total</span>
               </div>
-              {market.orderBook?.yes.map((o, i) => (
-                <div key={i} className="ob-row">
-                  <span className="ob-price">{o.price_cents}%</span>
-                  <span className="ob-shares">{satsToShares(o.total_sats)}</span>
-                  <span className="ob-sats">({formatSats(o.total_sats)})</span>
-                  <div className="ob-bar" style={{ width: `${Math.min(satsToShares(o.total_sats) * 5, 100)}%` }} />
-                </div>
-              ))}
+              {market.orderBook?.yes.map((o, i) => {
+                const shares = satsToShares(o.total_sats);
+                const priceSats = o.price_cents * 10; // 40% = 400 sats/share
+                const totalCost = shares * priceSats;
+                return (
+                  <div key={i} className="ob-row">
+                    <span className="ob-price">{formatSats(priceSats)}</span>
+                    <span className="ob-shares">{shares}</span>
+                    <span className="ob-total">{formatSats(totalCost)}</span>
+                    <div className="ob-bar" style={{ width: `${Math.min(shares * 5, 100)}%` }} />
+                  </div>
+                );
+              })}
               {(!market.orderBook?.yes || market.orderBook.yes.length === 0) && (
                 <span className="empty">No offers</span>
+              )}
+              {market.orderBook?.yes && market.orderBook.yes.length > 0 && (
+                <div className="ob-depth">
+                  Depth: {market.orderBook.yes.reduce((sum, o) => sum + satsToShares(o.total_sats), 0)} shares
+                </div>
               )}
             </div>
             <div className="ob-side ob-no">
@@ -1643,17 +1654,28 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               <div className="ob-header-row">
                 <span>Price</span>
                 <span>Shares</span>
+                <span>Total</span>
               </div>
-              {market.orderBook?.no.map((o, i) => (
-                <div key={i} className="ob-row">
-                  <span className="ob-price">{o.price_cents}%</span>
-                  <span className="ob-shares">{satsToShares(o.total_sats)}</span>
-                  <span className="ob-sats">({formatSats(o.total_sats)})</span>
-                  <div className="ob-bar ob-bar-no" style={{ width: `${Math.min(satsToShares(o.total_sats) * 5, 100)}%` }} />
-                </div>
-              ))}
+              {market.orderBook?.no.map((o, i) => {
+                const shares = satsToShares(o.total_sats);
+                const priceSats = (100 - o.price_cents) * 10; // NO price = 100 - YES price
+                const totalCost = shares * priceSats;
+                return (
+                  <div key={i} className="ob-row">
+                    <span className="ob-price">{formatSats(priceSats)}</span>
+                    <span className="ob-shares">{shares}</span>
+                    <span className="ob-total">{formatSats(totalCost)}</span>
+                    <div className="ob-bar ob-bar-no" style={{ width: `${Math.min(shares * 5, 100)}%` }} />
+                  </div>
+                );
+              })}
               {(!market.orderBook?.no || market.orderBook.no.length === 0) && (
                 <span className="empty">No offers</span>
+              )}
+              {market.orderBook?.no && market.orderBook.no.length > 0 && (
+                <div className="ob-depth">
+                  Depth: {market.orderBook.no.reduce((sum, o) => sum + satsToShares(o.total_sats), 0)} shares
+                </div>
               )}
             </div>
           </div>
@@ -2803,14 +2825,14 @@ function App() {
       )}
 
       {showBotAdmin && user?.is_admin === 1 && (
-        <BotAdmin onClose={() => setShowBotAdmin(false)} />
+        <BotAdmin onClose={() => { setShowBotAdmin(false); loadData(); }} />
       )}
 
       {showUserAdmin && user?.is_admin === 1 && (
         <div className="modal-overlay" onClick={() => setShowUserAdmin(false)}>
           <div className="modal modal-fullscreen modal-user-admin" onClick={e => e.stopPropagation()}>
             <button className="btn btn-outline modal-close-btn" onClick={() => setShowUserAdmin(false)}>×</button>
-            <UserAdmin />
+            <UserAdmin currentUserId={user.id} onBalanceChange={refreshBalance} />
           </div>
         </div>
       )}

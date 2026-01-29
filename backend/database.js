@@ -408,6 +408,15 @@ try {
   // Column already exists, ignore
 }
 
+// Migration: Add curve_center to bot_market_weights for per-market odds skew
+// This determines WHERE on the price curve to concentrate offers (probability-based)
+// Values 5-50 (percentage), with lower = more offers at low prices (unlikely player)
+try {
+  db.exec(`ALTER TABLE bot_market_weights ADD COLUMN curve_center REAL DEFAULT NULL`);
+} catch (e) {
+  // Column already exists, ignore
+}
+
 // Create LNURL auth challenges table (for tracking login attempts)
 db.exec(`
   CREATE TABLE IF NOT EXISTS lnurl_auth_challenges (

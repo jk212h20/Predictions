@@ -1112,6 +1112,77 @@ export default function BotAdmin({ onClose }) {
                     )}
                   </div>
                   
+                  {/* AUTO-MATCH WARNING */}
+                  {deploymentPreview.auto_matches?.has_auto_matches && (
+                    <div className="auto-match-warning">
+                      <h4>⚠️ AUTO-MATCH WARNING</h4>
+                      <p className="auto-match-intro">
+                        These orders will <strong>immediately match</strong> existing YES orders and become locked bets:
+                      </p>
+                      <div className="auto-match-summary">
+                        <div className="match-stat critical">
+                          <label>Total Instant Locks:</label>
+                          <value>{formatSats(deploymentPreview.auto_matches.total_match_cost)} sats</value>
+                        </div>
+                        <div className="match-stat">
+                          <label>Markets Affected:</label>
+                          <value>{deploymentPreview.auto_matches.markets_with_matches}</value>
+                        </div>
+                        <div className="match-stat">
+                          <label>Total Match Amount:</label>
+                          <value>{formatSats(deploymentPreview.auto_matches.total_match_amount)} sats</value>
+                        </div>
+                      </div>
+                      
+                      <details className="auto-match-details">
+                        <summary>📋 View matches by market ({deploymentPreview.auto_matches.markets_with_matches} markets)</summary>
+                        <div className="auto-match-markets">
+                          {deploymentPreview.auto_matches.matches_by_market?.map((market, i) => (
+                            <div key={i} className="auto-match-market">
+                              <div className="market-name">{market.grandmaster_name}</div>
+                              <table className="mini-table">
+                                <thead>
+                                  <tr>
+                                    <th>Your NO@</th>
+                                    <th>Matches YES@</th>
+                                    <th>Match Amt</th>
+                                    <th>Your Cost</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {market.matches.map((match, j) => (
+                                    <tr key={j}>
+                                      <td>{match.order_price}%</td>
+                                      <td>
+                                        {match.matching_orders.map(o => `${o.yes_price}%`).join(', ')}
+                                      </td>
+                                      <td>{formatSats(match.match_amount)}</td>
+                                      <td className="cost">{formatSats(match.match_cost)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                                <tfoot>
+                                  <tr>
+                                    <td colSpan="2"><strong>Market Total</strong></td>
+                                    <td><strong>{formatSats(market.total_match_amount)}</strong></td>
+                                    <td className="cost"><strong>{formatSats(market.total_match_cost)}</strong></td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                      
+                      <div className="auto-match-impact">
+                        <p>
+                          💡 <strong>Impact:</strong> {formatSats(deploymentPreview.auto_matches.total_match_cost)} sats will be 
+                          immediately converted to active bets (not resting orders). This increases your exposure instantly.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  
                   {/* DEPLOY BUTTON */}
                   <div className="deploy-actions">
                     <button 

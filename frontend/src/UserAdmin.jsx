@@ -27,7 +27,7 @@ const timeAgo = (dateStr) => {
   return date.toLocaleDateString();
 };
 
-export default function UserAdmin() {
+export default function UserAdmin({ currentUserId, onBalanceChange }) {
   const [stats, setStats] = useState(null);
   const [users, setUsers] = useState([]);
   const [total, setTotal] = useState(0);
@@ -148,6 +148,10 @@ export default function UserAdmin() {
       await api.adjustUserBalance(selectedUser, amount, balanceReason);
       await loadUserDetails(selectedUser);
       await loadUsers();
+      // If we modified the currently logged-in user's balance, refresh the header
+      if (selectedUser === currentUserId && onBalanceChange) {
+        await onBalanceChange();
+      }
       setShowBalanceModal(false);
       setBalanceAmount('');
       setBalanceReason('');
