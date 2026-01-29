@@ -82,6 +82,12 @@ export default function BotAdmin({ onClose }) {
   // Track which tier is being dragged and its local value
   const [draggingTier, setDraggingTier] = useState(null);
   const [localTierValues, setLocalTierValues] = useState({});
+  
+  // Withdrawal admin state
+  const [pendingWithdrawals, setPendingWithdrawals] = useState([]);
+  const [channelBalance, setChannelBalance] = useState(null);
+  const [loadingWithdrawals, setLoadingWithdrawals] = useState(false);
+  const [processingWithdrawal, setProcessingWithdrawal] = useState(null);
 
   useEffect(() => {
     loadAllData();
@@ -406,6 +412,26 @@ export default function BotAdmin({ onClose }) {
           </button>
           <button className={activeTab === 'log' ? 'active' : ''} onClick={() => setActiveTab('log')}>
             Activity Log
+          </button>
+          <button 
+            className={activeTab === 'withdrawals' ? 'active' : ''} 
+            onClick={async () => {
+              setActiveTab('withdrawals');
+              setLoadingWithdrawals(true);
+              try {
+                const [withdrawals, balance] = await Promise.all([
+                  api.getAdminPendingWithdrawals(),
+                  api.getChannelBalance()
+                ]);
+                setPendingWithdrawals(withdrawals || []);
+                setChannelBalance(balance);
+              } catch (err) {
+                console.error('Failed to load withdrawals:', err);
+              }
+              setLoadingWithdrawals(false);
+            }}
+          >
+            💸 Withdrawals {pendingWithdrawals.length > 0 && `(${pendingWithdrawals.length})`}
           </button>
         </div>
 
@@ -1423,6 +1449,130 @@ export default function BotAdmin({ onClose }) {
                   </div>
                 </>
               )}
+            </div>
+          )}
+
+          {/* WITHDRAWALS TAB */}
+          {activeTab === 'withdrawals' && (
+            <div className="bot-withdrawals">
+              <h3>💸 Pending Withdrawals</h3>
+              
+              {/* Channel Balance Info */}
+              {channelBalance && (
+                <div className="channel-balance-info">
+                  <div className="balance-stat">
+                    <label>Outbound Liquidity</label>
+                    <value>{formatSats(channelBalance.outbound_sats)} sats</value>
+                  </div>
+                  <div className="balance-stat">
+                    <label>Inbound Liquidity</label>
+                    <value>{formatSats(channelBalance.inbound_sats)} sats</value>
+                  </div>
+                  {!channelBalance.is_real && (
+                    <div className="mock-warning">⚠️ Mock Mode - No real Lightning</div>
+                  )}
+                </div>
+              )}
+              
+              {loadingWithdrawals ? (
+                <div className="loading">Loading withdrawals...</div>
+              ) : pendingWithdrawals.length === 0 ? (
+                <div className="empty-state">
+                  <p>✅ No pending withdrawals</p>
+                </div>
+              ) : (
+                <div className="withdrawals-list">
+                  {pendingWithdrawals.map(pw => (
+                    <div key={pw.id} className="withdrawal-card">
+                      <div className="withdrawal-header">
+                        <span className="withdrawal-user">{pw.username || pw.email || 'Unknown User'}</span>
+                        <span className="withdrawal-amount">{formatSats(pw.amount_sats)} sats</span>
+                      </div>
+                      <div className="withdrawal-details">
+                        <div><label>User Deposits:</label> {formatSats(pw.user_total_deposits)} sats</div>
+                        <div><label>Requested:</label> {new Date(pw.created_at).toLocaleString()}</div>
+                        <div className="invoice-preview">
+                          <label>Invoice:</label> 
+                          <code>{pw.payment_request?.substring(0, 50)}...</code>
+                        </div>
+                      </div>
+                      <div className="withdrawal-actions">
+                        <button 
+                          className="btn btn-success"
+                          onClick={async () => {
+                            if (!confirm(`Approve withdrawal of ${formatSats(pw.amount_sats)} sats to ${pw.username || pw.email}?`)) return;
+                            setProcessingWithdrawal(pw.id);
+                            try {
+                              const result = await api.approveWithdrawal(pw.id);
+                              alert(`✅ Withdrawal approved! Payment hash: ${result.payment_hash?.substring(0, 20)}...`);
+                              // Refresh list
+                              const [withdrawals, balance] = await Promise.all([
+                                api.getAdminPendingWithdrawals(),
+                                api.getChannelBalance()
+                              ]);
+                              setPendingWithdrawals(withdrawals || []);
+                              setChannelBalance(balance);
+                            } catch (err) {
+                              alert('❌ Failed to approve: ' + err.message);
+                            }
+                            setProcessingWithdrawal(null);
+                          }}
+                          disabled={processingWithdrawal === pw.id || (channelBalance && channelBalance.outbound_sats < pw.amount_sats)}
+                        >
+                          {processingWithdrawal === pw.id ? 'Processing...' : '✅ Approve'}
+                        </button>
+                        <button 
+                          className="btn btn-danger"
+                          onClick={async () => {
+                            const reason = prompt('Reason for rejection (optional):');
+                            if (reason === null) return; // cancelled
+                            setProcessingWithdrawal(pw.id);
+                            try {
+                              await api.rejectWithdrawal(pw.id, reason || 'Rejected by admin');
+                              alert('Withdrawal rejected. Funds returned to user.');
+                              // Refresh list
+                              const withdrawals = await api.getAdminPendingWithdrawals();
+                              setPendingWithdrawals(withdrawals || []);
+                            } catch (err) {
+                              alert('Failed to reject: ' + err.message);
+                            }
+                            setProcessingWithdrawal(null);
+                          }}
+                          disabled={processingWithdrawal === pw.id}
+                        >
+                          ❌ Reject
+                        </button>
+                      </div>
+                      {channelBalance && channelBalance.outbound_sats < pw.amount_sats && (
+                        <div className="liquidity-warning">
+                          ⚠️ Insufficient channel liquidity ({formatSats(channelBalance.outbound_sats)} available)
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              <button 
+                className="btn btn-outline"
+                onClick={async () => {
+                  setLoadingWithdrawals(true);
+                  try {
+                    const [withdrawals, balance] = await Promise.all([
+                      api.getAdminPendingWithdrawals(),
+                      api.getChannelBalance()
+                    ]);
+                    setPendingWithdrawals(withdrawals || []);
+                    setChannelBalance(balance);
+                  } catch (err) {
+                    console.error('Failed to refresh:', err);
+                  }
+                  setLoadingWithdrawals(false);
+                }}
+                style={{ marginTop: '1rem' }}
+              >
+                🔄 Refresh
+              </button>
             </div>
           )}
         </div>

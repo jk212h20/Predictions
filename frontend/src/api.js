@@ -448,3 +448,28 @@ export const initializeFromScores = () =>
     method: 'POST',
     headers: getHeaders(),
   }).then(handleResponse);
+
+// ==================== ADMIN WITHDRAWAL MANAGEMENT ====================
+
+// Get all pending withdrawals (admin)
+export const getAdminPendingWithdrawals = () =>
+  fetch(`${API_BASE}/admin/withdrawals/pending`, { headers: getHeaders() }).then(handleResponse);
+
+// Get channel balance info (admin)
+export const getChannelBalance = () =>
+  fetch(`${API_BASE}/admin/channel-balance`, { headers: getHeaders() }).then(handleResponse);
+
+// Approve a pending withdrawal (admin)
+export const approveWithdrawal = (withdrawalId) =>
+  fetch(`${API_BASE}/admin/withdrawals/${withdrawalId}/approve`, {
+    method: 'POST',
+    headers: getHeaders(),
+  }).then(handleResponse);
+
+// Reject a pending withdrawal (admin)
+export const rejectWithdrawal = (withdrawalId, reason) =>
+  fetch(`${API_BASE}/admin/withdrawals/${withdrawalId}/reject`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ reason }),
+  }).then(handleResponse);
