@@ -527,28 +527,6 @@ export default function BotAdmin({ onClose }) {
                 >
                   🔔 Bell
                 </button>
-                <button 
-                  className="btn btn-small"
-                  onClick={async () => {
-                    try {
-                      const result = await api.previewShape('exponential', { decay: 0.08 });
-                      setCurvePoints(result.normalized_points.map(p => ({ price: p.price, weight: p.weight })));
-                    } catch (err) { console.error(err); }
-                  }}
-                >
-                  📉 Exponential
-                </button>
-                <button 
-                  className="btn btn-small"
-                  onClick={async () => {
-                    try {
-                      const result = await api.previewShape('parabolic', { maxPrice: 55 });
-                      setCurvePoints(result.normalized_points.map(p => ({ price: p.price, weight: p.weight })));
-                    } catch (err) { console.error(err); }
-                  }}
-                >
-                  ⌒ Parabolic
-                </button>
                 
                 {/* SAVED CUSTOM CURVES */}
                 {savedCurves.length > 0 && (
@@ -556,32 +534,49 @@ export default function BotAdmin({ onClose }) {
                     <span className="preset-divider">|</span>
                     <span className="preset-label">Saved:</span>
                     {savedCurves.map(curve => (
-                      <button 
-                        key={curve.id}
-                        className="btn btn-small btn-custom"
-                        onClick={() => {
-                          console.log('Loading curve:', curve);
-                          try {
-                            let points = curve.normalized_points;
-                            // Parse if it's a string
-                            if (typeof points === 'string') {
-                              points = JSON.parse(points);
+                      <div key={curve.id} className="custom-curve-item">
+                        <button 
+                          className="btn btn-small btn-custom"
+                          onClick={() => {
+                            console.log('Loading curve:', curve);
+                            try {
+                              let points = curve.normalized_points;
+                              // Parse if it's a string
+                              if (typeof points === 'string') {
+                                points = JSON.parse(points);
+                              }
+                              if (Array.isArray(points) && points.length > 0) {
+                                setCurvePoints(points.map(p => ({ price: p.price, weight: p.weight })));
+                                console.log('Loaded points:', points);
+                              } else {
+                                alert('This curve has no saved points');
+                              }
+                            } catch (err) {
+                              console.error('Failed to load curve:', err);
+                              alert('Failed to load curve: ' + err.message);
                             }
-                            if (Array.isArray(points) && points.length > 0) {
-                              setCurvePoints(points.map(p => ({ price: p.price, weight: p.weight })));
-                              console.log('Loaded points:', points);
-                            } else {
-                              alert('This curve has no saved points');
+                          }}
+                          title={`Load "${curve.name}"`}
+                        >
+                          ✏️ {curve.name}
+                        </button>
+                        <button 
+                          className="btn btn-small btn-delete-curve"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (!confirm(`Delete curve "${curve.name}"?`)) return;
+                            try {
+                              await api.deleteShape(curve.id);
+                              await loadSavedCurves();
+                            } catch (err) {
+                              alert('Failed to delete: ' + err.message);
                             }
-                          } catch (err) {
-                            console.error('Failed to load curve:', err);
-                            alert('Failed to load curve: ' + err.message);
-                          }
-                        }}
-                        title={`Load "${curve.name}"`}
-                      >
-                        ✏️ {curve.name}
-                      </button>
+                          }}
+                          title={`Delete "${curve.name}"`}
+                        >
+                          🗑️
+                        </button>
+                      </div>
                     ))}
                   </>
                 )}
@@ -1243,7 +1238,7 @@ export default function BotAdmin({ onClose }) {
                                 max="50"
                                 step="0.5"
                                 value={draggingTier === tier.tier 
-                                  ? (localTierValues[tier.tier] ?? parseFloat(tier.budgetPercent) || 0)
+                                  ? (localTierValues[tier.tier] !== undefined ? localTierValues[tier.tier] : (parseFloat(tier.budgetPercent) || 0))
                                   : (parseFloat(tier.budgetPercent) || 0)
                                 }
                                 onChange={e => {
