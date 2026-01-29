@@ -431,23 +431,31 @@ function setTierBudget(tier, budgetPercent) {
 /**
  * Initialize weights for all markets based on tier likelihood scores
  * Higher score = higher weight within tier
+ * 
+ * FIXED: Now includes ALL attendance markets, not just those with scores.
+ * Markets without scores get a default score of 25 (average tier).
  */
 function initializeWeightsFromScores() {
+  // Get ALL attendance markets, including those without likelihood_score
   const markets = db.prepare(`
-    SELECT m.id, g.likelihood_score, g.tier
+    SELECT m.id, g.likelihood_score, g.tier, g.name
     FROM markets m
-    JOIN grandmasters g ON m.grandmaster_id = g.id
-    WHERE m.type = 'attendance' AND m.status = 'open' AND g.likelihood_score IS NOT NULL
+    LEFT JOIN grandmasters g ON m.grandmaster_id = g.id
+    WHERE m.type = 'attendance' AND m.status = 'open'
   `).all();
   
   if (markets.length === 0) return;
   
-  // Calculate total score to normalize
-  const totalScore = markets.reduce((sum, m) => sum + Math.max(1, m.likelihood_score), 0);
+  // DEFAULT_SCORE for markets without likelihood_score (25 = average tier)
+  const DEFAULT_SCORE = 25;
+  
+  // Calculate total score to normalize (use default for null scores)
+  const totalScore = markets.reduce((sum, m) => sum + (m.likelihood_score || DEFAULT_SCORE), 0);
   
   const init = db.transaction(() => {
     for (const market of markets) {
-      const score = Math.max(1, market.likelihood_score);
+      // Use default score for markets without likelihood_score
+      const score = market.likelihood_score || DEFAULT_SCORE;
       const weight = score / totalScore;
       
       const existing = db.prepare(`SELECT * FROM bot_market_weights WHERE market_id = ?`).get(market.id);
