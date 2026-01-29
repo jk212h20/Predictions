@@ -78,6 +78,10 @@ export default function BotAdmin({ onClose }) {
   const [loadingTiers, setLoadingTiers] = useState(false);
   const [expandedTier, setExpandedTier] = useState(null);
   const [tierMarkets, setTierMarkets] = useState({});
+  
+  // Track which tier is being dragged and its local value
+  const [draggingTier, setDraggingTier] = useState(null);
+  const [localTierValues, setLocalTierValues] = useState({});
 
   useEffect(() => {
     loadAllData();
@@ -1238,10 +1242,30 @@ export default function BotAdmin({ onClose }) {
                                 min="0"
                                 max="50"
                                 step="0.5"
-                                value={parseFloat(tier.budgetPercent) || 0}
+                                value={draggingTier === tier.tier 
+                                  ? (localTierValues[tier.tier] ?? parseFloat(tier.budgetPercent) || 0)
+                                  : (parseFloat(tier.budgetPercent) || 0)
+                                }
                                 onChange={e => {
+                                  // Update local state only while dragging - don't call API
                                   const newValue = parseFloat(e.target.value);
-                                  handleTierBudgetChange(tier.tier, newValue);
+                                  setDraggingTier(tier.tier);
+                                  setLocalTierValues(prev => ({ ...prev, [tier.tier]: newValue }));
+                                }}
+                                onMouseUp={e => {
+                                  // Call API only on release
+                                  const newValue = localTierValues[tier.tier];
+                                  if (newValue !== undefined) {
+                                    handleTierBudgetChange(tier.tier, newValue);
+                                  }
+                                  setDraggingTier(null);
+                                  setLocalTierValues({});
+                                }}
+                                onMouseLeave={e => {
+                                  // If mouse leaves while dragging, commit the change
+                                  if (draggingTier === tier.tier && localTierValues[tier.tier] !== undefined) {
+                                    // Let mouseUp handle it if they're still pressing
+                                  }
                                 }}
                                 disabled={saving}
                               />
@@ -1250,7 +1274,10 @@ export default function BotAdmin({ onClose }) {
                                 min="0"
                                 max="100"
                                 step="0.5"
-                                value={parseFloat(tier.budgetPercent).toFixed(1)}
+                                value={draggingTier === tier.tier 
+                                  ? (localTierValues[tier.tier] !== undefined ? localTierValues[tier.tier].toFixed(1) : parseFloat(tier.budgetPercent).toFixed(1))
+                                  : parseFloat(tier.budgetPercent).toFixed(1)
+                                }
                                 onChange={e => {
                                   const newValue = parseFloat(e.target.value) || 0;
                                   handleTierBudgetChange(tier.tier, newValue);
