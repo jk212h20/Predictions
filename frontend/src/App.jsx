@@ -1736,7 +1736,7 @@ function PortfolioModal({ user, onClose, onRefresh }) {
     setLoading(true);
     try {
       const [posData, ordData, txData, tradeData] = await Promise.all([
-        api.getPositions(),
+        api.getNetPositions(), // Use aggregated net positions
         api.getOpenOrders(),
         api.getTransactions({ limit: 50 }),
         api.getTrades({ limit: 50 }),
@@ -1786,8 +1786,10 @@ function PortfolioModal({ user, onClose, onRefresh }) {
     ? transactions.filter(t => t.type === txFilter)
     : transactions;
 
-  // Calculate total value of positions
-  const totalPositionValue = positions.reduce((sum, p) => sum + p.amount_sats, 0);
+  // Calculate total value of positions (potential payout)
+  const totalPositionValue = positions.reduce((sum, p) => sum + p.potential_payout, 0);
+  const totalCostBasis = positions.reduce((sum, p) => sum + p.total_cost_sats, 0);
+  const totalShares = positions.reduce((sum, p) => sum + p.shares, 0);
   const totalOrdersLocked = orders.reduce((sum, o) => {
     const remaining = o.amount_sats - o.filled_sats;
     return sum + (o.side === 'yes' 
@@ -1810,11 +1812,11 @@ function PortfolioModal({ user, onClose, onRefresh }) {
             <span className="summary-value">{formatSats(totalOrdersLocked)} sats</span>
           </div>
           <div className="summary-item">
-            <span className="summary-label">Active Positions</span>
-            <span className="summary-value">{positions.length} bets</span>
+            <span className="summary-label">Total Shares Held</span>
+            <span className="summary-value">{totalShares} shares</span>
           </div>
           <div className="summary-item">
-            <span className="summary-label">Position Value</span>
+            <span className="summary-label">Potential Payout</span>
             <span className="summary-value">{formatSats(totalPositionValue)} sats</span>
           </div>
         </div>
@@ -1850,7 +1852,7 @@ function PortfolioModal({ user, onClose, onRefresh }) {
           <div className="portfolio-loading">Loading...</div>
         ) : (
           <div className="portfolio-content">
-            {/* POSITIONS TAB */}
+            {/* POSITIONS TAB - Shows aggregated net positions per market */}
             {activeTab === 'positions' && (
               <div className="portfolio-positions">
                 {positions.length === 0 ? (
@@ -1859,40 +1861,53 @@ function PortfolioModal({ user, onClose, onRefresh }) {
                     <p className="empty-hint">Place trades on markets to see your positions here.</p>
                   </div>
                 ) : (
-                  <table className="portfolio-table">
-                    <thead>
-                      <tr>
-                        <th>Market</th>
-                        <th>Side</th>
-                        <th>Price</th>
-                        <th>Amount</th>
-                        <th>Potential Payout</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {positions.map(p => (
-                        <tr key={p.id}>
-                          <td className="market-cell">{p.title}</td>
-                          <td>
-                            <span className={`side-badge side-${p.side}`}>
-                              {p.side.toUpperCase()}
-                            </span>
-                          </td>
-                          <td>{p.price_cents}%</td>
-                          <td>{formatSats(p.amount_sats)} sats</td>
-                          <td className="payout-cell">
-                            {formatSats(p.amount_sats)} sats
-                          </td>
-                          <td>
-                            <span className={`status-badge status-${p.market_status}`}>
-                              {p.market_status}
-                            </span>
-                          </td>
+                  <>
+                    <p className="positions-hint">
+                      💡 Each share pays <strong>1,000 sats</strong> if your prediction is correct.
+                    </p>
+                    <table className="portfolio-table">
+                      <thead>
+                        <tr>
+                          <th>Market</th>
+                          <th>Position</th>
+                          <th>Cost Basis</th>
+                          <th>Potential Payout</th>
+                          <th>Status</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {positions.map(p => (
+                          <tr key={p.market_id}>
+                            <td className="market-cell">
+                              {p.grandmaster_name ? `${p.grandmaster_name}: ` : ''}{p.market_title}
+                            </td>
+                            <td>
+                              <span className={`position-badge side-${p.net_side}`}>
+                                {p.shares} {p.net_side?.toUpperCase()} share{p.shares !== 1 ? 's' : ''}
+                              </span>
+                            </td>
+                            <td className="cost-cell">
+                              {formatSats(p.total_cost_sats)} sats
+                              <span className="avg-cost">({formatSats(p.avg_cost_per_share)}/share)</span>
+                            </td>
+                            <td className="payout-cell">
+                              <strong>{formatSats(p.potential_payout)} sats</strong>
+                              {p.potential_payout > p.total_cost_sats && (
+                                <span className="profit-hint">
+                                  +{formatSats(p.potential_payout - p.total_cost_sats)} if correct
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              <span className={`status-badge status-${p.market_status}`}>
+                                {p.market_status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
                 )}
               </div>
             )}

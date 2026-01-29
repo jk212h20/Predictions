@@ -576,6 +576,82 @@ app.get('/api/user/positions', authMiddleware, (req, res) => {
   res.json(positions);
 });
 
+// Get aggregated net positions per market (shares-based view)
+app.get('/api/user/positions/net', authMiddleware, (req, res) => {
+  // Get all markets where user has active positions
+  const marketsWithPositions = db.prepare(`
+    SELECT DISTINCT m.id, m.title, m.type, m.status as market_status, g.name as grandmaster_name
+    FROM bets b
+    JOIN markets m ON b.market_id = m.id
+    LEFT JOIN grandmasters g ON m.grandmaster_id = g.id
+    WHERE (b.yes_user_id = ? OR b.no_user_id = ?) AND b.status = 'active'
+  `).all(req.user.id, req.user.id);
+  
+  const netPositions = marketsWithPositions.map(market => {
+    // Get YES positions for this market
+    const yesBets = db.prepare(`
+      SELECT SUM(amount_sats) as total_sats,
+             SUM(amount_sats * price_cents / 100) as total_cost
+      FROM bets 
+      WHERE market_id = ? AND yes_user_id = ? AND status = 'active'
+    `).get(market.id, req.user.id);
+    
+    // Get NO positions for this market
+    const noBets = db.prepare(`
+      SELECT SUM(amount_sats) as total_sats,
+             SUM(amount_sats * (100 - price_cents) / 100) as total_cost
+      FROM bets 
+      WHERE market_id = ? AND no_user_id = ? AND status = 'active'
+    `).get(market.id, req.user.id);
+    
+    const yesShares = Math.floor((yesBets.total_sats || 0) / 1000);
+    const noShares = Math.floor((noBets.total_sats || 0) / 1000);
+    const yesCost = yesBets.total_cost || 0;
+    const noCost = noBets.total_cost || 0;
+    
+    // Calculate net position
+    let netSide, netShares, totalCostBasis;
+    
+    if (yesShares > noShares) {
+      netSide = 'yes';
+      netShares = yesShares - noShares;
+      // Cost basis: YES cost minus value recovered from NO shares (they paid for payout we got)
+      totalCostBasis = yesCost - (noShares * 1000 - noCost); 
+    } else if (noShares > yesShares) {
+      netSide = 'no';
+      netShares = noShares - yesShares;
+      // Cost basis: NO cost minus value recovered from YES shares
+      totalCostBasis = noCost - (yesShares * 1000 - yesCost);
+    } else {
+      // Equal - fully hedged (should have been auto-settled, but handle edge case)
+      netSide = null;
+      netShares = 0;
+      totalCostBasis = 0;
+    }
+    
+    const avgCostPerShare = netShares > 0 ? Math.round(totalCostBasis / netShares) : 0;
+    const potentialPayout = netShares * 1000; // Each share pays 1000 sats if correct
+    
+    return {
+      market_id: market.id,
+      market_title: market.title,
+      market_type: market.type,
+      market_status: market.market_status,
+      grandmaster_name: market.grandmaster_name,
+      net_side: netSide,
+      shares: netShares,
+      total_cost_sats: Math.max(0, Math.round(totalCostBasis)),
+      avg_cost_per_share: Math.max(0, avgCostPerShare),
+      potential_payout: potentialPayout,
+      // Raw data for debugging
+      yes_shares: yesShares,
+      no_shares: noShares,
+    };
+  }).filter(p => p.shares > 0); // Only return markets with actual positions
+  
+  res.json(netPositions);
+});
+
 app.get('/api/user/orders', authMiddleware, (req, res) => {
   const orders = db.prepare(`
     SELECT o.*, m.title, m.type, g.name as grandmaster_name
@@ -1158,14 +1234,94 @@ app.post('/api/orders', authMiddleware, (req, res) => {
     VALUES (?, ?, 'order_placed', ?, ?, ?, 'completed')
   `).run(uuidv4(), req.user.id, -cost, newBalance, orderId);
   
+  // AUTO-SETTLE: Check if user now has opposing positions in this market
+  let autoSettled = null;
+  if (matchedBets.length > 0) {
+    // Get user's current positions in this market
+    const yesShares = db.prepare(`
+      SELECT COALESCE(SUM(amount_sats), 0) as total
+      FROM bets 
+      WHERE market_id = ? AND yes_user_id = ? AND status = 'active'
+    `).get(market_id, req.user.id).total;
+    
+    const noShares = db.prepare(`
+      SELECT COALESCE(SUM(amount_sats), 0) as total
+      FROM bets 
+      WHERE market_id = ? AND no_user_id = ? AND status = 'active'
+    `).get(market_id, req.user.id).total;
+    
+    // If user has both YES and NO, auto-settle the pairs
+    if (yesShares > 0 && noShares > 0) {
+      const settleAmount = Math.min(yesShares, noShares);
+      const settlePayout = settleAmount; // 1 share = 1000 sats, amount_sats IS the payout
+      
+      // Mark bets as settled (oldest first)
+      let remainingToSettle = settleAmount;
+      
+      // Settle YES side bets
+      const yesBets = db.prepare(`
+        SELECT * FROM bets 
+        WHERE market_id = ? AND yes_user_id = ? AND status = 'active'
+        ORDER BY created_at ASC
+      `).all(market_id, req.user.id);
+      
+      for (const bet of yesBets) {
+        if (remainingToSettle <= 0) break;
+        const settleFromBet = Math.min(bet.amount_sats, remainingToSettle);
+        if (settleFromBet === bet.amount_sats) {
+          db.prepare(`UPDATE bets SET status = 'settled', settled_at = datetime('now'), winner_user_id = ? WHERE id = ?`)
+            .run(req.user.id, bet.id);
+        }
+        // Note: partial bet settlement would require splitting bets, keeping simple for now
+        remainingToSettle -= settleFromBet;
+      }
+      
+      // Settle NO side bets
+      remainingToSettle = settleAmount;
+      const noBets = db.prepare(`
+        SELECT * FROM bets 
+        WHERE market_id = ? AND no_user_id = ? AND status = 'active'
+        ORDER BY created_at ASC
+      `).all(market_id, req.user.id);
+      
+      for (const bet of noBets) {
+        if (remainingToSettle <= 0) break;
+        const settleFromBet = Math.min(bet.amount_sats, remainingToSettle);
+        if (settleFromBet === bet.amount_sats) {
+          db.prepare(`UPDATE bets SET status = 'settled', settled_at = datetime('now'), winner_user_id = ? WHERE id = ?`)
+            .run(req.user.id, bet.id);
+        }
+        remainingToSettle -= settleFromBet;
+      }
+      
+      // Credit user the settled amount (1 YES + 1 NO = 1000 sats guaranteed)
+      const currentUser = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
+      const balanceAfterSettle = currentUser.balance_sats + settlePayout;
+      db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(balanceAfterSettle, req.user.id);
+      
+      // Record the auto-settle transaction
+      db.prepare(`
+        INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, reference_id, status)
+        VALUES (?, ?, 'bet_won', ?, ?, ?, 'completed')
+      `).run(uuidv4(), req.user.id, settlePayout, balanceAfterSettle, 'auto-settle-' + market_id);
+      
+      autoSettled = {
+        pairs_settled: settleAmount / 1000, // Convert to shares
+        payout: settlePayout,
+        new_balance: balanceAfterSettle
+      };
+    }
+  }
+  
   res.json({
     order_id: orderId,
     status: orderStatus,
     filled: amount_sats - remainingAmount,
     remaining: remainingAmount,
     cost,
-    new_balance: newBalance,
-    matched_bets: matchedBets
+    new_balance: autoSettled ? autoSettled.new_balance : newBalance,
+    matched_bets: matchedBets,
+    auto_settled: autoSettled
   });
 });
 

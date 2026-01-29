@@ -200,6 +200,10 @@ export const cancelResolution = (market_id) =>
 export const getPositions = () =>
   fetch(`${API_BASE}/user/positions`, { headers: getHeaders() }).then(handleResponse);
 
+// Get aggregated net positions (shares-based view)
+export const getNetPositions = () =>
+  fetch(`${API_BASE}/user/positions/net`, { headers: getHeaders() }).then(handleResponse);
+
 export const getOpenOrders = () =>
   fetch(`${API_BASE}/user/orders`, { headers: getHeaders() }).then(handleResponse);
 
