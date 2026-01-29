@@ -488,10 +488,16 @@ function LoginModal({ onLogin, onRegister, onGoogleLogin, onLightningLogin, onCl
 }
 
 function WalletModal({ user, onClose, onRefresh }) {
+  // Wallet type toggle: 'lightning' or 'onchain'
+  const [walletType, setWalletType] = useState('lightning');
+  
+  // Lightning deposit state
   const [depositAmount, setDepositAmount] = useState(100000);
   const [invoice, setInvoice] = useState(null);
   const [depositStatus, setDepositStatus] = useState('idle'); // idle, generating, waiting, checking, credited, error
   const [depositError, setDepositError] = useState('');
+  
+  // Lightning withdraw state
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawInvoice, setWithdrawInvoice] = useState('');
   const [withdrawStatus, setWithdrawStatus] = useState('idle'); // idle, processing, completed, pending, error
@@ -500,6 +506,18 @@ function WalletModal({ user, onClose, onRefresh }) {
   const [pendingWithdrawals, setPendingWithdrawals] = useState([]);
   const [cancellingId, setCancellingId] = useState(null);
   const pollingRef = useRef(null);
+  
+  // On-chain state
+  const [onchainAddress, setOnchainAddress] = useState(null);
+  const [onchainDeposits, setOnchainDeposits] = useState([]);
+  const [onchainDepositStatus, setOnchainDepositStatus] = useState('idle'); // idle, generating, ready, checking
+  const [onchainDepositError, setOnchainDepositError] = useState('');
+  const [onchainWithdrawAddress, setOnchainWithdrawAddress] = useState('');
+  const [onchainWithdrawAmount, setOnchainWithdrawAmount] = useState('');
+  const [onchainWithdrawStatus, setOnchainWithdrawStatus] = useState('idle'); // idle, processing, pending, error
+  const [onchainWithdrawError, setOnchainWithdrawError] = useState('');
+  const [onchainWithdrawResult, setOnchainWithdrawResult] = useState(null);
+  const [onchainPendingWithdrawals, setOnchainPendingWithdrawals] = useState([]);
 
   // Load pending withdrawals on mount
   useEffect(() => {
@@ -660,17 +678,127 @@ function WalletModal({ user, onClose, onRefresh }) {
     setWithdrawError('');
   };
 
+  // On-chain handlers
+  const loadOnchainData = async () => {
+    try {
+      const [deposits, pending] = await Promise.all([
+        api.getOnchainDeposits(),
+        api.getOnchainPendingWithdrawals(),
+      ]);
+      setOnchainDeposits(deposits);
+      setOnchainPendingWithdrawals(pending);
+    } catch (err) {
+      console.error('Failed to load on-chain data:', err);
+    }
+  };
+
+  const handleOnchainDeposit = async () => {
+    setOnchainDepositStatus('generating');
+    setOnchainDepositError('');
+    try {
+      const result = await api.createOnchainDeposit();
+      setOnchainAddress(result);
+      setOnchainDepositStatus('ready');
+    } catch (err) {
+      setOnchainDepositError(err.message);
+      setOnchainDepositStatus('idle');
+    }
+  };
+
+  const handleCheckOnchainDeposit = async () => {
+    setOnchainDepositStatus('checking');
+    try {
+      const result = await api.checkOnchainDeposit();
+      setOnchainDeposits(result.deposits || []);
+      if (result.credited && result.credited.length > 0) {
+        await onRefresh();
+        alert(`Deposit credited! +${formatSats(result.credited.reduce((s, c) => s + c.amount_sats, 0))} sats`);
+      }
+      setOnchainDepositStatus('ready');
+    } catch (err) {
+      setOnchainDepositError(err.message);
+      setOnchainDepositStatus('ready');
+    }
+  };
+
+  const handleOnchainWithdraw = async () => {
+    if (!onchainWithdrawAmount || parseInt(onchainWithdrawAmount) < 10000) {
+      setOnchainWithdrawError('Minimum withdrawal is 10,000 sats');
+      return;
+    }
+    if (!onchainWithdrawAddress) {
+      setOnchainWithdrawError('Please enter a Bitcoin address');
+      return;
+    }
+    
+    setOnchainWithdrawStatus('processing');
+    setOnchainWithdrawError('');
+    
+    try {
+      const result = await api.requestOnchainWithdrawal(onchainWithdrawAddress, parseInt(onchainWithdrawAmount));
+      await onRefresh();
+      setOnchainWithdrawStatus('pending');
+      setOnchainWithdrawResult(result);
+      setOnchainWithdrawAmount('');
+      setOnchainWithdrawAddress('');
+      loadOnchainData();
+    } catch (err) {
+      setOnchainWithdrawStatus('error');
+      setOnchainWithdrawError(err.message);
+    }
+  };
+
+  const handleCancelOnchainWithdrawal = async (withdrawalId) => {
+    if (!confirm('Cancel this pending withdrawal? Funds will be returned to your balance.')) return;
+    
+    setCancellingId(withdrawalId);
+    try {
+      await api.cancelOnchainWithdrawal(withdrawalId);
+      await loadOnchainData();
+      await onRefresh();
+    } catch (err) {
+      alert(err.message);
+    }
+    setCancellingId(null);
+  };
+
+  // Load on-chain data when switching to on-chain tab
+  useEffect(() => {
+    if (walletType === 'onchain') {
+      loadOnchainData();
+    }
+  }, [walletType]);
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
-        <h2>⚡ Wallet</h2>
+        <h2>💰 Wallet</h2>
         <div className="wallet-balance">
           <span>Balance:</span>
           <strong>{formatSats(user.balance_sats)} sats</strong>
         </div>
 
+        {/* Wallet Type Toggle */}
+        <div className="wallet-type-toggle">
+          <button 
+            className={`wallet-type-btn ${walletType === 'lightning' ? 'active' : ''}`}
+            onClick={() => setWalletType('lightning')}
+          >
+            ⚡ Lightning
+          </button>
+          <button 
+            className={`wallet-type-btn ${walletType === 'onchain' ? 'active' : ''}`}
+            onClick={() => setWalletType('onchain')}
+          >
+            ₿ On-Chain
+          </button>
+        </div>
+
+        {/* LIGHTNING WALLET */}
+        {walletType === 'lightning' && (
+          <>
         <div className="wallet-section">
-          <h3>Deposit</h3>
+          <h3>⚡ Lightning Deposit</h3>
           {depositStatus === 'idle' || depositStatus === 'generating' || depositStatus === 'error' ? (
             <>
               {depositError && <div className="auth-error">{depositError}</div>}
@@ -874,6 +1002,183 @@ function WalletModal({ user, onClose, onRefresh }) {
             </div>
           )}
         </div>
+          </>
+        )}
+
+        {/* ON-CHAIN BITCOIN WALLET */}
+        {walletType === 'onchain' && (
+          <>
+            <div className="wallet-section">
+              <h3>₿ On-Chain Deposit</h3>
+              <p className="onchain-info">
+                Deposits ≤100k sats credit instantly. Larger deposits require 1 confirmation.
+                <br />Minimum: 10,000 sats
+              </p>
+              
+              {onchainDepositError && <div className="auth-error">{onchainDepositError}</div>}
+              
+              {onchainDepositStatus === 'idle' && (
+                <button 
+                  className="btn btn-primary"
+                  onClick={handleOnchainDeposit}
+                >
+                  Generate Deposit Address
+                </button>
+              )}
+              
+              {onchainDepositStatus === 'generating' && (
+                <div className="loading-state">
+                  <div className="spinner"></div>
+                  <p>Generating address...</p>
+                </div>
+              )}
+              
+              {(onchainDepositStatus === 'ready' || onchainDepositStatus === 'checking') && onchainAddress && (
+                <div className="onchain-deposit-address">
+                  <div className="qr-wrapper">
+                    <QRCodeSVG 
+                      value={`bitcoin:${onchainAddress.address}`}
+                      size={180}
+                      level="M"
+                      includeMargin={true}
+                    />
+                  </div>
+                  <div className="address-display">
+                    <code className="btc-address">{onchainAddress.address}</code>
+                    <button 
+                      className="btn btn-small btn-outline"
+                      onClick={() => {
+                        navigator.clipboard.writeText(onchainAddress.address);
+                        alert('Address copied!');
+                      }}
+                    >
+                      📋 Copy
+                    </button>
+                  </div>
+                  <button 
+                    className="btn btn-outline"
+                    onClick={handleCheckOnchainDeposit}
+                    disabled={onchainDepositStatus === 'checking'}
+                  >
+                    {onchainDepositStatus === 'checking' ? 'Checking...' : '🔄 Check for Deposits'}
+                  </button>
+                  <button 
+                    className="btn btn-small btn-outline"
+                    onClick={handleOnchainDeposit}
+                  >
+                    Generate New Address
+                  </button>
+                </div>
+              )}
+              
+              {/* Recent On-Chain Deposits */}
+              {onchainDeposits.length > 0 && (
+                <div className="onchain-deposits-list">
+                  <h4>Recent Deposits</h4>
+                  {onchainDeposits.slice(0, 5).map(d => (
+                    <div key={d.id} className={`onchain-deposit-item ${d.credited ? 'credited' : 'pending'}`}>
+                      <div className="deposit-info">
+                        <span className="deposit-amount">{d.amount_sats ? formatSats(d.amount_sats) + ' sats' : 'Waiting...'}</span>
+                        <span className="deposit-confs">{d.confirmations || 0} confirmations</span>
+                      </div>
+                      <span className={`deposit-status ${d.credited ? 'credited' : 'pending'}`}>
+                        {d.credited ? '✓ Credited' : d.amount_sats ? '⏳ Confirming' : '🔍 Waiting'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="wallet-section">
+              <h3>₿ On-Chain Withdraw</h3>
+              <p className="onchain-info">
+                All on-chain withdrawals require admin approval.
+                <br />First 10 withdrawals: fees paid by platform.
+                <br />Minimum: 10,000 sats
+              </p>
+              
+              {onchainWithdrawError && <div className="auth-error">{onchainWithdrawError}</div>}
+              
+              {onchainWithdrawStatus === 'idle' || onchainWithdrawStatus === 'error' ? (
+                <>
+                  <div className="deposit-amount-input">
+                    <input
+                      type="number"
+                      placeholder="Amount"
+                      value={onchainWithdrawAmount}
+                      onChange={e => setOnchainWithdrawAmount(e.target.value)}
+                      min="10000"
+                      step="1000"
+                    />
+                    <span className="sats-label">sats</span>
+                  </div>
+                  <div className="deposit-presets">
+                    <button className="btn btn-small btn-outline" onClick={() => setOnchainWithdrawAmount('50000')}>50k</button>
+                    <button className="btn btn-small btn-outline" onClick={() => setOnchainWithdrawAmount('100000')}>100k</button>
+                    <button className="btn btn-small btn-outline" onClick={() => setOnchainWithdrawAmount('500000')}>500k</button>
+                    <button className="btn btn-small btn-outline" onClick={() => setOnchainWithdrawAmount(String(user.balance_sats))}>Max</button>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Bitcoin address (bc1..., 3..., or 1...)"
+                    value={onchainWithdrawAddress}
+                    onChange={e => setOnchainWithdrawAddress(e.target.value)}
+                    className="withdraw-invoice-input"
+                  />
+                  <button 
+                    className="btn btn-primary btn-large btn-onchain-withdraw"
+                    onClick={handleOnchainWithdraw}
+                    disabled={!onchainWithdrawAmount || !onchainWithdrawAddress || parseInt(onchainWithdrawAmount) < 10000}
+                  >
+                    Request Withdrawal
+                  </button>
+                </>
+              ) : onchainWithdrawStatus === 'processing' ? (
+                <div className="withdraw-processing">
+                  <div className="spinner"></div>
+                  <p>Submitting withdrawal request...</p>
+                </div>
+              ) : onchainWithdrawStatus === 'pending' && onchainWithdrawResult ? (
+                <div className="withdraw-pending">
+                  <div className="pending-icon">⏳</div>
+                  <p>Withdrawal request submitted!</p>
+                  <p className="pending-note">
+                    Your request is pending admin approval.<br/>
+                    You can cancel it below to get your funds back.
+                  </p>
+                  <button className="btn btn-outline" onClick={() => setOnchainWithdrawStatus('idle')}>
+                    Make Another Withdrawal
+                  </button>
+                </div>
+              ) : null}
+
+              {/* Pending On-Chain Withdrawals */}
+              {onchainPendingWithdrawals.length > 0 && (
+                <div className="pending-withdrawals-list">
+                  <h4>Pending On-Chain Withdrawals</h4>
+                  {onchainPendingWithdrawals.map(pw => (
+                    <div key={pw.id} className="pending-withdrawal-item">
+                      <div className="pw-info">
+                        <span className="pw-amount">{formatSats(pw.amount_sats)} sats</span>
+                        <span className="pw-address" title={pw.dest_address}>
+                          {pw.dest_address.slice(0, 12)}...{pw.dest_address.slice(-6)}
+                        </span>
+                      </div>
+                      <button 
+                        className="btn btn-small btn-danger"
+                        onClick={() => handleCancelOnchainWithdrawal(pw.id)}
+                        disabled={cancellingId === pw.id}
+                      >
+                        {cancellingId === pw.id ? 'Cancelling...' : 'Cancel'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
 
         <button className="btn btn-outline modal-close" onClick={onClose}>Close</button>
       </div>

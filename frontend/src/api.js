@@ -473,3 +473,65 @@ export const rejectWithdrawal = (withdrawalId, reason) =>
     headers: getHeaders(),
     body: JSON.stringify({ reason }),
   }).then(handleResponse);
+
+// ==================== ON-CHAIN BITCOIN ====================
+
+// Create on-chain deposit address
+export const createOnchainDeposit = () =>
+  fetch(`${API_BASE}/wallet/onchain/deposit`, {
+    method: 'POST',
+    headers: getHeaders(),
+  }).then(handleResponse);
+
+// Check on-chain deposit status
+export const checkOnchainDeposit = () =>
+  fetch(`${API_BASE}/wallet/onchain/deposit/status`, { headers: getHeaders() }).then(handleResponse);
+
+// Get on-chain deposit history
+export const getOnchainDeposits = () =>
+  fetch(`${API_BASE}/wallet/onchain/deposits`, { headers: getHeaders() }).then(handleResponse);
+
+// Request on-chain withdrawal (all go to admin queue)
+export const requestOnchainWithdrawal = (address, amount_sats) =>
+  fetch(`${API_BASE}/wallet/onchain/withdraw`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ address, amount_sats }),
+  }).then(handleResponse);
+
+// Cancel pending on-chain withdrawal
+export const cancelOnchainWithdrawal = (withdrawal_id) =>
+  fetch(`${API_BASE}/wallet/onchain/withdraw/cancel`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ withdrawal_id }),
+  }).then(handleResponse);
+
+// Get user's pending on-chain withdrawals
+export const getOnchainPendingWithdrawals = () =>
+  fetch(`${API_BASE}/wallet/onchain/pending-withdrawals`, { headers: getHeaders() }).then(handleResponse);
+
+// ==================== ADMIN ON-CHAIN ====================
+
+// Get all pending on-chain withdrawals (admin)
+export const getAdminOnchainPendingWithdrawals = () =>
+  fetch(`${API_BASE}/admin/onchain/withdrawals/pending`, { headers: getHeaders() }).then(handleResponse);
+
+// Get on-chain wallet balance (admin)
+export const getOnchainBalance = () =>
+  fetch(`${API_BASE}/admin/onchain/balance`, { headers: getHeaders() }).then(handleResponse);
+
+// Approve on-chain withdrawal (admin)
+export const approveOnchainWithdrawal = (withdrawalId) =>
+  fetch(`${API_BASE}/admin/onchain/withdrawals/${withdrawalId}/approve`, {
+    method: 'POST',
+    headers: getHeaders(),
+  }).then(handleResponse);
+
+// Reject on-chain withdrawal (admin)
+export const rejectOnchainWithdrawal = (withdrawalId, reason) =>
+  fetch(`${API_BASE}/admin/onchain/withdrawals/${withdrawalId}/reject`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ reason }),
+  }).then(handleResponse);

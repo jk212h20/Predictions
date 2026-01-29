@@ -1,8 +1,16 @@
 # Progress - Predictions Market Maker Bot
 
-## Latest Update: 2026-01-28 - Withdrawal UI Enhancement
+## Latest Update: 2026-01-29 - Build Time Optimizations
 
 ### Latest Changes
+1. **Optimized Dockerfile** - Eliminated redundant build stages and duplicate native module compilation
+2. **Removed Build Tools from Production** - Production image no longer contains python3, make, g++ (smaller, faster)
+3. **Vite Build Optimizations** - Added chunk splitting, esbuild minification, and ES2020 target
+4. **Better Layer Caching** - Pre-built node_modules copied from builder stage for faster rebuilds
+
+### Previous Updates
+
+#### Withdrawal UI Enhancement (2026-01-28)
 1. **Enhanced Withdrawal UI** - Complete wallet modal with proper withdrawal flow
 2. **Pending Withdrawals** - Shows list of pending withdrawals with cancel option
 3. **Auto-approval Logic** - Withdrawals ≤100k sats AND ≤total deposits are instant
@@ -45,12 +53,12 @@ At 50% exposure (500K):
 - [x] 1% threshold-based pullback
 - [x] Active curve selection
 - [x] Enhanced withdrawal UI with pending state tracking
+- [x] Admin panel for withdrawal approval (approve/reject pending withdrawals)
 
 ### What's Left
 - [ ] Mobile UI polish
 - [ ] Performance optimization for large order books
-- [ ] More sophisticated pullback strategies
-- [ ] Admin panel for withdrawal approval
+- [ ] More sophisticated pullback strategies (optional enhancement)
 
 ### Database Schema Notes
 - `bot_config` - stores max_acceptable_loss, global_multiplier, threshold_percent, bot_user_id

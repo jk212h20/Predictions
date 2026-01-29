@@ -536,6 +536,232 @@ async function getNodeInfo() {
   };
 }
 
+// ==================== ON-CHAIN BITCOIN FUNCTIONS ====================
+
+/**
+ * Generate a new on-chain Bitcoin address
+ * Uses LND's built-in wallet
+ * @param {string} type - Address type: 'p2wkh' (default), 'np2wkh', 'p2tr'
+ * @returns {Object} Object with address
+ */
+async function generateOnchainAddress(type = 'p2wkh') {
+  if (isVoltageConfigured()) {
+    try {
+      console.log('Generating new on-chain address...');
+      
+      // LND REST API: GET /v1/newaddress
+      // type: ADDRESS_TYPE - 0=WITNESS_PUBKEY_HASH (p2wkh), 1=NESTED_PUBKEY_HASH (np2wkh), 4=TAPROOT_PUBKEY (p2tr)
+      const typeMap = {
+        'p2wkh': 0,
+        'np2wkh': 1,
+        'p2tr': 4
+      };
+      
+      const response = await lndRequest(`/v1/newaddress?type=${typeMap[type] || 0}`, {
+        method: 'GET',
+      });
+      
+      console.log('Generated on-chain address:', response.address);
+      
+      return {
+        address: response.address,
+        type: type,
+        is_real: true,
+      };
+    } catch (err) {
+      console.error('Failed to generate on-chain address:', err);
+      throw new Error(`Failed to generate address: ${err.message}`);
+    }
+  }
+  
+  // Mock for development
+  const mockAddress = 'bc1q' + crypto.randomBytes(20).toString('hex');
+  return {
+    address: mockAddress,
+    type: type,
+    is_real: false,
+  };
+}
+
+/**
+ * Get on-chain wallet balance
+ * @returns {Object} Balance info with confirmed and unconfirmed sats
+ */
+async function getOnchainBalance() {
+  if (isVoltageConfigured()) {
+    try {
+      // LND REST API: GET /v1/balance/blockchain
+      const response = await lndRequest('/v1/balance/blockchain', {
+        method: 'GET',
+      });
+      
+      return {
+        confirmed_sats: parseInt(response.confirmed_balance || 0),
+        unconfirmed_sats: parseInt(response.unconfirmed_balance || 0),
+        total_sats: parseInt(response.total_balance || 0),
+        is_real: true,
+      };
+    } catch (err) {
+      console.error('Failed to get on-chain balance:', err);
+      return { confirmed_sats: 0, unconfirmed_sats: 0, total_sats: 0, error: err.message, is_real: true };
+    }
+  }
+  
+  // Mock for development
+  return {
+    confirmed_sats: 5000000, // 5M sats mock
+    unconfirmed_sats: 0,
+    total_sats: 5000000,
+    is_real: false,
+  };
+}
+
+/**
+ * Get on-chain transactions (for checking deposits)
+ * @returns {Array} List of on-chain transactions
+ */
+async function getOnchainTransactions() {
+  if (isVoltageConfigured()) {
+    try {
+      // LND REST API: GET /v1/transactions
+      const response = await lndRequest('/v1/transactions', {
+        method: 'GET',
+      });
+      
+      return (response.transactions || []).map(tx => ({
+        txid: tx.tx_hash,
+        amount_sats: parseInt(tx.amount || 0),
+        confirmations: parseInt(tx.num_confirmations || 0),
+        block_height: parseInt(tx.block_height || 0),
+        timestamp: tx.time_stamp ? new Date(parseInt(tx.time_stamp) * 1000).toISOString() : null,
+        dest_addresses: tx.dest_addresses || [],
+        is_real: true,
+      }));
+    } catch (err) {
+      console.error('Failed to get on-chain transactions:', err);
+      return [];
+    }
+  }
+  
+  // Mock for development
+  return [];
+}
+
+/**
+ * Send on-chain Bitcoin transaction
+ * @param {string} address - Destination Bitcoin address
+ * @param {number} amountSats - Amount in satoshis
+ * @param {number} satPerVbyte - Fee rate (sat/vbyte), optional - uses LND estimate if not provided
+ * @returns {Object} Transaction result with txid
+ */
+async function sendOnchain(address, amountSats, satPerVbyte = null) {
+  if (isVoltageConfigured()) {
+    try {
+      console.log(`Sending on-chain: ${amountSats} sats to ${address}`);
+      
+      // LND REST API: POST /v1/transactions
+      const body = {
+        addr: address,
+        amount: amountSats.toString(),
+        target_conf: 6, // Target 6 block confirmation (if no fee specified)
+      };
+      
+      if (satPerVbyte) {
+        body.sat_per_vbyte = satPerVbyte.toString();
+      }
+      
+      const response = await lndRequest('/v1/transactions', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      
+      console.log('On-chain transaction sent:', response.txid);
+      
+      return {
+        txid: response.txid,
+        amount_sats: amountSats,
+        address: address,
+        status: 'completed',
+        is_real: true,
+      };
+    } catch (err) {
+      console.error('Failed to send on-chain transaction:', err);
+      throw new Error(`On-chain send failed: ${err.message}`);
+    }
+  }
+  
+  // Mock for development
+  const mockTxid = crypto.randomBytes(32).toString('hex');
+  return {
+    txid: mockTxid,
+    amount_sats: amountSats,
+    address: address,
+    status: 'completed',
+    is_real: false,
+  };
+}
+
+/**
+ * Estimate on-chain transaction fee
+ * @param {number} targetConf - Target confirmation blocks (default 6)
+ * @returns {Object} Fee estimate in sat/vbyte
+ */
+async function estimateOnchainFee(targetConf = 6) {
+  if (isVoltageConfigured()) {
+    try {
+      // LND REST API: GET /v1/transactions/fee
+      // This endpoint estimates fee for a transaction
+      const response = await lndRequest(`/v1/transactions/fee?target_conf=${targetConf}`, {
+        method: 'GET',
+      });
+      
+      return {
+        sat_per_vbyte: parseInt(response.sat_per_vbyte || response.fee_sat || 10),
+        is_real: true,
+      };
+    } catch (err) {
+      console.error('Failed to estimate fee:', err);
+      // Return a reasonable default if estimation fails
+      return { sat_per_vbyte: 10, is_real: true, error: err.message };
+    }
+  }
+  
+  // Mock for development
+  return {
+    sat_per_vbyte: 10,
+    is_real: false,
+  };
+}
+
+/**
+ * Check for deposits to specific addresses
+ * Returns transactions that sent to any of the provided addresses
+ * @param {Array<string>} addresses - List of addresses to check
+ * @returns {Array} Matching transactions with address info
+ */
+async function checkAddressesForDeposits(addresses) {
+  const transactions = await getOnchainTransactions();
+  
+  const deposits = [];
+  for (const tx of transactions) {
+    // Only consider incoming transactions (positive amount)
+    if (tx.amount_sats <= 0) continue;
+    
+    // Check if any of our addresses are in dest_addresses
+    for (const addr of addresses) {
+      if (tx.dest_addresses && tx.dest_addresses.includes(addr)) {
+        deposits.push({
+          ...tx,
+          matched_address: addr,
+        });
+        break;
+      }
+    }
+  }
+  
+  return deposits;
+}
+
 /**
  * Get channel balance info (for checking outbound liquidity before withdrawals)
  * @returns {Object} Channel balance info
@@ -621,6 +847,14 @@ module.exports = {
   getNodeInfo,
   getChannelBalance,
   mockInvoices,
+  
+  // On-chain Bitcoin functions
+  generateOnchainAddress,
+  getOnchainBalance,
+  getOnchainTransactions,
+  sendOnchain,
+  estimateOnchainFee,
+  checkAddressesForDeposits,
   
   // Voltage helpers
   isVoltageConfigured,

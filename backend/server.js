@@ -2034,6 +2034,398 @@ app.post('/api/admin/withdrawals/:id/reject', authMiddleware, adminMiddleware, (
   res.json({ success: true, message: 'Withdrawal rejected and funds returned to user' });
 });
 
+// ==================== ON-CHAIN BITCOIN ROUTES ====================
+
+// Constants for on-chain deposits
+const ONCHAIN_MIN_DEPOSIT = 10000;  // 10k sats minimum
+const ONCHAIN_INSTANT_CREDIT_LIMIT = 100000;  // 100k sats - credit immediately (0-conf)
+const FREE_ONCHAIN_WITHDRAWALS = 10;  // First 10 withdrawals are free
+
+// Get or create on-chain deposit address for user
+app.post('/api/wallet/onchain/deposit', authMiddleware, async (req, res) => {
+  try {
+    // Generate a new address (per user requirement)
+    const addressResult = await lightning.generateOnchainAddress('p2wkh');
+    
+    // Store in database
+    const depositId = uuidv4();
+    db.prepare(`
+      INSERT INTO onchain_deposits (id, user_id, address)
+      VALUES (?, ?, ?)
+    `).run(depositId, req.user.id, addressResult.address);
+    
+    res.json({
+      deposit_id: depositId,
+      address: addressResult.address,
+      min_amount: ONCHAIN_MIN_DEPOSIT,
+      instant_credit_limit: ONCHAIN_INSTANT_CREDIT_LIMIT,
+      is_real: addressResult.is_real,
+    });
+  } catch (err) {
+    console.error('Failed to create on-chain deposit address:', err);
+    res.status(500).json({ error: 'Failed to generate deposit address', message: err.message });
+  }
+});
+
+// Check on-chain deposit status and credit if confirmed
+app.get('/api/wallet/onchain/deposit/status', authMiddleware, async (req, res) => {
+  try {
+    // Get all uncredited deposits for this user
+    const pendingDeposits = db.prepare(`
+      SELECT * FROM onchain_deposits 
+      WHERE user_id = ? AND credited = 0
+      ORDER BY created_at DESC
+    `).all(req.user.id);
+    
+    if (pendingDeposits.length === 0) {
+      return res.json({ deposits: [], credited: [] });
+    }
+    
+    // Get addresses to check
+    const addresses = pendingDeposits.map(d => d.address);
+    
+    // Check for deposits via LND
+    const deposits = await lightning.checkAddressesForDeposits(addresses);
+    
+    const credited = [];
+    const updated = [];
+    
+    for (const deposit of deposits) {
+      // Find matching pending deposit record
+      const pendingRecord = pendingDeposits.find(p => p.address === deposit.matched_address);
+      if (!pendingRecord) continue;
+      
+      // Update record with transaction info
+      db.prepare(`
+        UPDATE onchain_deposits 
+        SET txid = ?, amount_sats = ?, confirmations = ?, detected_at = COALESCE(detected_at, datetime('now'))
+        WHERE id = ?
+      `).run(deposit.txid, deposit.amount_sats, deposit.confirmations, pendingRecord.id);
+      
+      // Check if we should credit this deposit
+      const shouldCredit = 
+        !pendingRecord.credited && 
+        deposit.amount_sats >= ONCHAIN_MIN_DEPOSIT &&
+        (
+          (deposit.amount_sats <= ONCHAIN_INSTANT_CREDIT_LIMIT) || // Small amount: instant
+          (deposit.confirmations >= 1) // Large amount: need 1 confirmation
+        );
+      
+      if (shouldCredit) {
+        // Credit the user
+        const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
+        const newBalance = user.balance_sats + deposit.amount_sats;
+        
+        db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, req.user.id);
+        db.prepare(`
+          UPDATE onchain_deposits 
+          SET credited = 1, confirmed_at = datetime('now')
+          WHERE id = ?
+        `).run(pendingRecord.id);
+        
+        // Record transaction
+        db.prepare(`
+          INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, reference_id, status)
+          VALUES (?, ?, 'deposit', ?, ?, ?, 'completed')
+        `).run(uuidv4(), req.user.id, deposit.amount_sats, newBalance, pendingRecord.id);
+        
+        credited.push({
+          deposit_id: pendingRecord.id,
+          amount_sats: deposit.amount_sats,
+          txid: deposit.txid,
+          new_balance: newBalance,
+        });
+      } else {
+        updated.push({
+          deposit_id: pendingRecord.id,
+          address: deposit.matched_address,
+          amount_sats: deposit.amount_sats,
+          confirmations: deposit.confirmations,
+          txid: deposit.txid,
+          needs_confirmation: deposit.amount_sats > ONCHAIN_INSTANT_CREDIT_LIMIT && deposit.confirmations < 1,
+        });
+      }
+    }
+    
+    // Get updated list of all deposits for user
+    const allDeposits = db.prepare(`
+      SELECT * FROM onchain_deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT 10
+    `).all(req.user.id);
+    
+    res.json({
+      deposits: allDeposits,
+      credited,
+      updated,
+    });
+  } catch (err) {
+    console.error('Failed to check on-chain deposits:', err);
+    res.status(500).json({ error: 'Failed to check deposits', message: err.message });
+  }
+});
+
+// Get user's on-chain deposit history
+app.get('/api/wallet/onchain/deposits', authMiddleware, (req, res) => {
+  const deposits = db.prepare(`
+    SELECT * FROM onchain_deposits 
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+    LIMIT 20
+  `).all(req.user.id);
+  res.json(deposits);
+});
+
+// Request on-chain withdrawal (all go to admin queue)
+app.post('/api/wallet/onchain/withdraw', authMiddleware, async (req, res) => {
+  const { address, amount_sats } = req.body;
+  
+  // Validation
+  if (!address || !amount_sats) {
+    return res.status(400).json({ error: 'Address and amount are required' });
+  }
+  
+  if (amount_sats < ONCHAIN_MIN_DEPOSIT) {
+    return res.status(400).json({ error: `Minimum withdrawal is ${ONCHAIN_MIN_DEPOSIT.toLocaleString()} sats` });
+  }
+  
+  // Basic Bitcoin address validation (bc1, 3, or 1 prefix)
+  if (!/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,90}$/.test(address)) {
+    return res.status(400).json({ error: 'Invalid Bitcoin address' });
+  }
+  
+  // Check balance
+  const user = db.prepare('SELECT balance_sats, free_onchain_withdrawals_used FROM users WHERE id = ?').get(req.user.id);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  
+  if (user.balance_sats < amount_sats) {
+    return res.status(400).json({ error: 'Insufficient balance', available: user.balance_sats });
+  }
+  
+  // Check for unconfirmed deposits that would block withdrawal
+  const unconfirmedDeposits = db.prepare(`
+    SELECT * FROM onchain_deposits 
+    WHERE user_id = ? AND credited = 1 AND confirmations < 1 AND amount_sats > ?
+  `).all(req.user.id, ONCHAIN_INSTANT_CREDIT_LIMIT);
+  
+  if (unconfirmedDeposits.length > 0) {
+    const totalUnconfirmed = unconfirmedDeposits.reduce((sum, d) => sum + d.amount_sats, 0);
+    return res.status(400).json({
+      error: 'Withdrawal paused',
+      reason: `You have ${unconfirmedDeposits.length} unconfirmed deposit(s) totaling ${totalUnconfirmed.toLocaleString()} sats. Please wait for 1 confirmation before withdrawing.`,
+      unconfirmed_deposits: unconfirmedDeposits.map(d => ({
+        amount_sats: d.amount_sats,
+        txid: d.txid,
+        confirmations: d.confirmations,
+      })),
+    });
+  }
+  
+  // Determine if user pays fee
+  const freeWithdrawalsUsed = user.free_onchain_withdrawals_used || 0;
+  const userPaysFee = freeWithdrawalsUsed >= FREE_ONCHAIN_WITHDRAWALS;
+  
+  // Deduct balance (hold funds)
+  const newBalance = user.balance_sats - amount_sats;
+  db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, req.user.id);
+  
+  // Create withdrawal request
+  const withdrawalId = uuidv4();
+  db.prepare(`
+    INSERT INTO onchain_withdrawals (id, user_id, amount_sats, dest_address, user_pays_fee, status)
+    VALUES (?, ?, ?, ?, ?, 'pending')
+  `).run(withdrawalId, req.user.id, amount_sats, address, userPaysFee ? 1 : 0);
+  
+  // Record pending transaction
+  db.prepare(`
+    INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, reference_id, status)
+    VALUES (?, ?, 'withdrawal', ?, ?, ?, 'pending')
+  `).run(uuidv4(), req.user.id, -amount_sats, newBalance, withdrawalId);
+  
+  res.json({
+    success: true,
+    withdrawal_id: withdrawalId,
+    status: 'pending',
+    amount_sats,
+    address,
+    user_pays_fee: userPaysFee,
+    balance_sats: newBalance,
+    message: 'Withdrawal request submitted for admin approval.',
+  });
+});
+
+// Cancel pending on-chain withdrawal
+app.post('/api/wallet/onchain/withdraw/cancel', authMiddleware, (req, res) => {
+  const { withdrawal_id } = req.body;
+  
+  const withdrawal = db.prepare(`
+    SELECT * FROM onchain_withdrawals WHERE id = ? AND user_id = ? AND status = 'pending'
+  `).get(withdrawal_id, req.user.id);
+  
+  if (!withdrawal) {
+    return res.status(404).json({ error: 'Pending withdrawal not found' });
+  }
+  
+  // Refund balance
+  const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
+  const newBalance = user.balance_sats + withdrawal.amount_sats;
+  db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, req.user.id);
+  
+  // Update withdrawal status
+  db.prepare(`
+    UPDATE onchain_withdrawals 
+    SET status = 'rejected', rejection_reason = 'Cancelled by user', processed_at = datetime('now')
+    WHERE id = ?
+  `).run(withdrawal_id);
+  
+  // Update transaction
+  db.prepare(`UPDATE transactions SET status = 'failed' WHERE reference_id = ?`).run(withdrawal_id);
+  
+  res.json({ success: true, balance_sats: newBalance });
+});
+
+// Get user's pending on-chain withdrawals
+app.get('/api/wallet/onchain/pending-withdrawals', authMiddleware, (req, res) => {
+  const pending = db.prepare(`
+    SELECT * FROM onchain_withdrawals WHERE user_id = ? AND status = 'pending'
+    ORDER BY created_at DESC
+  `).all(req.user.id);
+  res.json(pending);
+});
+
+// ==================== ADMIN ON-CHAIN ROUTES ====================
+
+// Get all pending on-chain withdrawals (admin)
+app.get('/api/admin/onchain/withdrawals/pending', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const pending = db.prepare(`
+      SELECT ow.*, u.username, u.email, u.free_onchain_withdrawals_used,
+             (SELECT COALESCE(SUM(amount_sats), 0) FROM onchain_deposits 
+              WHERE user_id = ow.user_id AND credited = 1) as user_total_onchain_deposits
+      FROM onchain_withdrawals ow
+      JOIN users u ON ow.user_id = u.id
+      WHERE ow.status = 'pending'
+      ORDER BY ow.created_at ASC
+    `).all();
+    res.json(pending);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get pending withdrawals', message: err.message });
+  }
+});
+
+// Get on-chain wallet balance (admin)
+app.get('/api/admin/onchain/balance', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const balance = await lightning.getOnchainBalance();
+    res.json(balance);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get on-chain balance', message: err.message });
+  }
+});
+
+// Approve on-chain withdrawal (admin)
+app.post('/api/admin/onchain/withdrawals/:id/approve', authMiddleware, adminMiddleware, async (req, res) => {
+  const withdrawalId = req.params.id;
+  
+  const withdrawal = db.prepare(`
+    SELECT ow.*, u.free_onchain_withdrawals_used
+    FROM onchain_withdrawals ow
+    JOIN users u ON ow.user_id = u.id
+    WHERE ow.id = ? AND ow.status = 'pending'
+  `).get(withdrawalId);
+  
+  if (!withdrawal) {
+    return res.status(404).json({ error: 'Pending withdrawal not found' });
+  }
+  
+  try {
+    // Check on-chain balance
+    const balance = await lightning.getOnchainBalance();
+    if (balance.confirmed_sats < withdrawal.amount_sats) {
+      return res.status(400).json({
+        error: 'Insufficient on-chain balance',
+        required: withdrawal.amount_sats,
+        available: balance.confirmed_sats,
+      });
+    }
+    
+    // Send on-chain transaction
+    const txResult = await lightning.sendOnchain(withdrawal.dest_address, withdrawal.amount_sats);
+    
+    // Update withdrawal record
+    db.prepare(`
+      UPDATE onchain_withdrawals 
+      SET status = 'completed', txid = ?, approved_by = ?, processed_at = datetime('now')
+      WHERE id = ?
+    `).run(txResult.txid, req.user.id, withdrawalId);
+    
+    // Update transaction
+    db.prepare(`UPDATE transactions SET status = 'completed' WHERE reference_id = ?`).run(withdrawalId);
+    
+    // If this was a free withdrawal, increment counter
+    if (!withdrawal.user_pays_fee) {
+      db.prepare(`
+        UPDATE users SET free_onchain_withdrawals_used = COALESCE(free_onchain_withdrawals_used, 0) + 1
+        WHERE id = ?
+      `).run(withdrawal.user_id);
+    }
+    
+    res.json({
+      success: true,
+      txid: txResult.txid,
+      message: 'On-chain withdrawal approved and sent',
+    });
+  } catch (err) {
+    console.error('Failed to process on-chain withdrawal:', err);
+    
+    // Refund on failure
+    const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(withdrawal.user_id);
+    const newBalance = user.balance_sats + withdrawal.amount_sats;
+    db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, withdrawal.user_id);
+    
+    db.prepare(`
+      UPDATE onchain_withdrawals 
+      SET status = 'failed', rejection_reason = ?, processed_at = datetime('now')
+      WHERE id = ?
+    `).run(err.message, withdrawalId);
+    
+    db.prepare(`UPDATE transactions SET status = 'failed' WHERE reference_id = ?`).run(withdrawalId);
+    
+    res.status(500).json({ error: 'Failed to send on-chain transaction', message: err.message });
+  }
+});
+
+// Reject on-chain withdrawal (admin)
+app.post('/api/admin/onchain/withdrawals/:id/reject', authMiddleware, adminMiddleware, (req, res) => {
+  const withdrawalId = req.params.id;
+  const { reason } = req.body;
+  
+  const withdrawal = db.prepare(`
+    SELECT * FROM onchain_withdrawals WHERE id = ? AND status = 'pending'
+  `).get(withdrawalId);
+  
+  if (!withdrawal) {
+    return res.status(404).json({ error: 'Pending withdrawal not found' });
+  }
+  
+  // Refund the user
+  const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(withdrawal.user_id);
+  const newBalance = user.balance_sats + withdrawal.amount_sats;
+  db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, withdrawal.user_id);
+  
+  // Update withdrawal
+  db.prepare(`
+    UPDATE onchain_withdrawals 
+    SET status = 'rejected', rejection_reason = ?, approved_by = ?, processed_at = datetime('now')
+    WHERE id = ?
+  `).run(reason || 'Rejected by admin', req.user.id, withdrawalId);
+  
+  // Update transaction
+  db.prepare(`UPDATE transactions SET status = 'failed' WHERE reference_id = ?`).run(withdrawalId);
+  
+  res.json({ success: true, message: 'Withdrawal rejected and funds returned to user' });
+});
+
 // ==================== HEALTH CHECK ====================
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

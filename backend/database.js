@@ -255,6 +255,48 @@ db.exec(`
   -- Index for pending withdrawals
   CREATE INDEX IF NOT EXISTS idx_pending_withdrawals_status ON pending_withdrawals(status);
   CREATE INDEX IF NOT EXISTS idx_pending_withdrawals_user ON pending_withdrawals(user_id);
+
+  -- ==================== ON-CHAIN BITCOIN ====================
+
+  -- On-chain deposit addresses and tracking
+  CREATE TABLE IF NOT EXISTS onchain_deposits (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    address TEXT NOT NULL UNIQUE,
+    amount_sats INTEGER,
+    txid TEXT,
+    confirmations INTEGER DEFAULT 0,
+    credited INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    detected_at TEXT,
+    confirmed_at TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  -- On-chain withdrawal requests (all go to admin queue)
+  CREATE TABLE IF NOT EXISTS onchain_withdrawals (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    amount_sats INTEGER NOT NULL,
+    dest_address TEXT NOT NULL,
+    fee_sats INTEGER DEFAULT 0,
+    user_pays_fee INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'completed', 'rejected', 'failed')),
+    txid TEXT,
+    rejection_reason TEXT,
+    approved_by TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    processed_at TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (approved_by) REFERENCES users(id)
+  );
+
+  -- Indexes for on-chain tables
+  CREATE INDEX IF NOT EXISTS idx_onchain_deposits_user ON onchain_deposits(user_id);
+  CREATE INDEX IF NOT EXISTS idx_onchain_deposits_address ON onchain_deposits(address);
+  CREATE INDEX IF NOT EXISTS idx_onchain_deposits_credited ON onchain_deposits(credited);
+  CREATE INDEX IF NOT EXISTS idx_onchain_withdrawals_status ON onchain_withdrawals(status);
+  CREATE INDEX IF NOT EXISTS idx_onchain_withdrawals_user ON onchain_withdrawals(user_id);
 `);
 
 // Migration: Add avatar_url column if it doesn't exist
@@ -286,6 +328,13 @@ try {
   users.forEach((user, index) => {
     db.prepare('UPDATE users SET account_number = ? WHERE id = ?').run(index + 1, user.id);
   });
+} catch (e) {
+  // Column already exists, ignore
+}
+
+// Migration: Add free_onchain_withdrawals_used column for tracking free withdrawal quota
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN free_onchain_withdrawals_used INTEGER DEFAULT 0`);
 } catch (e) {
   // Column already exists, ignore
 }

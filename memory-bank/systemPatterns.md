@@ -189,9 +189,51 @@ id, market_id, weight, relative_odds, is_locked
 5. **Deploy**: Click Deploy All Orders
 6. **Monitor**: Check Overview tab for exposure levels
 
+## Withdrawal System
+
+### Overview
+The withdrawal system supports both **instant auto-approval** and **manual admin approval** for larger withdrawals.
+
+### Auto-Approval Rules
+```javascript
+canAutoApprove = 
+  amount_sats <= 100,000 (100k limit) &&
+  amount_sats <= user's total completed deposits &&
+  channel has sufficient outbound liquidity
+```
+
+If ALL conditions are met → withdrawal processes immediately via Lightning.
+
+### Pending Withdrawal Flow
+If auto-approval fails:
+1. Funds are deducted from user balance (held)
+2. `pending_withdrawals` record created with status = 'pending'
+3. Transaction record created with status = 'pending'
+4. User sees pending withdrawal in their wallet modal (can cancel)
+5. Admin sees pending withdrawal in Bot Admin → Withdrawals tab
+6. Admin can approve (pays invoice) or reject (refunds user)
+
+### Database: pending_withdrawals
+```sql
+id, user_id, amount_sats, payment_request, status, rejection_reason, approved_by, created_at, processed_at
+```
+- `status`: 'pending', 'completed', 'rejected', 'failed'
+- `approved_by`: admin user_id who processed it
+- `payment_request`: the Lightning invoice to pay
+
+### Admin Endpoints
+- `GET /api/admin/withdrawals/pending` - list pending with user info
+- `POST /api/admin/withdrawals/:id/approve` - pay invoice via LND
+- `POST /api/admin/withdrawals/:id/reject` - refund to user balance
+- `GET /api/admin/channel-balance` - check outbound liquidity
+
+### User Endpoints
+- `POST /api/wallet/withdraw` - request withdrawal (auto or pending)
+- `POST /api/wallet/withdraw/cancel` - cancel pending (self-refund)
+- `GET /api/wallet/pending-withdrawals` - list own pending
+
 ## Future Improvements (Backlog)
 
 - [ ] 3D Offers Landscape visualization
 - [ ] Auto-initialize weights if empty
 - [ ] Batch SQL updates for order scaling
-- [ ] Real Lightning withdrawal (LND pay invoice)
