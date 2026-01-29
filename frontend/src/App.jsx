@@ -1870,41 +1870,50 @@ function PortfolioModal({ user, onClose, onRefresh }) {
                         <tr>
                           <th>Market</th>
                           <th>Position</th>
-                          <th>Cost Basis</th>
-                          <th>Potential Payout</th>
+                          <th>Cost</th>
+                          <th>Potential Profit</th>
                           <th>Status</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {positions.map(p => (
-                          <tr key={p.market_id}>
-                            <td className="market-cell">
-                              {p.grandmaster_name ? `${p.grandmaster_name}: ` : ''}{p.market_title}
-                            </td>
-                            <td>
-                              <span className={`position-badge side-${p.net_side}`}>
-                                {p.shares} {p.net_side?.toUpperCase()} share{p.shares !== 1 ? 's' : ''}
-                              </span>
-                            </td>
-                            <td className="cost-cell">
-                              {formatSats(p.total_cost_sats)} sats
-                              <span className="avg-cost">({formatSats(p.avg_cost_per_share)}/share)</span>
-                            </td>
-                            <td className="payout-cell">
-                              <strong>{formatSats(p.potential_payout)} sats</strong>
-                              {p.potential_payout > p.total_cost_sats && (
-                                <span className="profit-hint">
-                                  +{formatSats(p.potential_payout - p.total_cost_sats)} if correct
+                        {positions.map(p => {
+                          // Determine display status and result
+                          const isWin = p.market_status === 'closed' && p.result === 'won';
+                          const isLoss = p.market_status === 'closed' && p.result === 'lost';
+                          const isPending = p.market_status === 'pending_resolution';
+                          const displayStatus = isWin ? 'Won' : isLoss ? 'Lost' : isPending ? 'Pending' : 'Ongoing';
+                          const statusClass = isWin ? 'status-won' : isLoss ? 'status-lost' : isPending ? 'status-pending' : 'status-ongoing';
+                          
+                          // Format market name - shorter version
+                          const marketName = p.grandmaster_name 
+                            ? `${p.grandmaster_name} Attends`
+                            : p.market_title;
+                          
+                          // Calculate profit
+                          const profit = p.potential_payout - p.total_cost_sats;
+                          
+                          return (
+                            <tr key={p.market_id} className={statusClass}>
+                              <td className="market-cell">{marketName}</td>
+                              <td>
+                                <span className={`position-badge side-${p.net_side}`}>
+                                  {p.shares} {p.net_side?.toUpperCase()}
                                 </span>
-                              )}
-                            </td>
-                            <td>
-                              <span className={`status-badge status-${p.market_status}`}>
-                                {p.market_status}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
+                              </td>
+                              <td className="cost-cell">{formatSats(p.total_cost_sats)} sats</td>
+                              <td className="profit-cell">
+                                <span className={profit > 0 ? 'profit-positive' : 'profit-zero'}>
+                                  {profit > 0 ? '+' : ''}{formatSats(profit)} sats
+                                </span>
+                              </td>
+                              <td>
+                                <span className={`status-badge ${statusClass}`}>
+                                  {displayStatus}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </>

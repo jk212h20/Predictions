@@ -1545,6 +1545,50 @@ label {
   color: #d29922;
 }
 
+/* Portfolio Status Colors */
+.status-badge.status-ongoing {
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.status-badge.status-pending {
+  background: rgba(210, 153, 34, 0.15);
+  color: #d29922;
+  border: 1px solid rgba(210, 153, 34, 0.3);
+}
+
+.status-badge.status-won {
+  background: var(--yes-bg);
+  color: var(--yes-color);
+  border: 1px solid rgba(38, 166, 65, 0.3);
+}
+
+.status-badge.status-lost {
+  background: var(--no-bg);
+  color: var(--no-color);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+}
+
+/* Position row coloring for closed markets */
+tr.status-won {
+  background: rgba(38, 166, 65, 0.05);
+}
+
+tr.status-lost {
+  background: rgba(248, 81, 73, 0.05);
+}
+
+/* Profit cell styling */
+.profit-cell .profit-positive {
+  color: var(--yes-color);
+  font-weight: 600;
+}
+
+.profit-cell .profit-zero {
+  color: var(--text-muted);
+}
+
 .result-badge {
   display: inline-block;
   padding: 0.25rem 0.625rem;
