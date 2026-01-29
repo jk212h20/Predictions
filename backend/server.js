@@ -10,6 +10,7 @@ const db = require('./database');
 const lightning = require('./lightning');
 const bot = require('./bot');
 const { seed } = require('./seed');
+const { seed: seedPlayers } = require('./seed-players');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -1732,6 +1733,36 @@ app.post('/api/admin/bot/tiers/initialize-from-scores', authMiddleware, adminMid
     res.json({ success: true, tiers });
   } catch (err) {
     res.status(500).json({ error: 'Failed to initialize from scores', message: err.message });
+  }
+});
+
+// ==================== SEED PLAYERS FROM CSV ====================
+// Run the CSV-based player seeder (adds new players and updates existing ones)
+app.post('/api/admin/seed-players', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    console.log('Admin triggering player seed from CSV...');
+    seedPlayers();
+    
+    // Return updated stats
+    const gmCount = db.prepare('SELECT COUNT(*) as count FROM grandmasters').get();
+    const marketCount = db.prepare('SELECT COUNT(*) as count FROM markets').get();
+    const tierCounts = db.prepare(`
+      SELECT tier, COUNT(*) as count FROM grandmasters 
+      WHERE tier IS NOT NULL GROUP BY tier
+    `).all();
+    
+    res.json({ 
+      success: true, 
+      message: 'Player seeding completed',
+      stats: {
+        total_grandmasters: gmCount.count,
+        total_markets: marketCount.count,
+        tiers: tierCounts
+      }
+    });
+  } catch (err) {
+    console.error('Seed players error:', err);
+    res.status(500).json({ error: 'Failed to seed players', message: err.message });
   }
 });
 
