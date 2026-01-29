@@ -35,6 +35,9 @@ RUN cd backend && npm ci --omit=dev
 # Copy backend source
 COPY backend/*.js ./backend/
 
+# Copy research data needed for seeding
+COPY research/attendance_likelihood.csv ./research/
+
 # Copy frontend build output
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 

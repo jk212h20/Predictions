@@ -48,8 +48,9 @@ coverage/
 # Memory bank (not needed in production)
 memory-bank/
 
-# Research files
-research/
+# Research files (except needed CSV)
+research/*.md
+research/*.json
 
 # Config files not needed in Docker
 nixpacks.toml
