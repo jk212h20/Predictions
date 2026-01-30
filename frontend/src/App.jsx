@@ -1147,7 +1147,8 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
     }
     setLoading(true);
     try {
-      await api.placeOrder(market.id, side, price, totalPayout);
+      // Pass priceSats (500) not price (50) - backend expects sats/share
+      await api.placeOrder(market.id, side, priceSats, totalPayout);
       await onRefresh();
       alert(`Order placed! Cost: ${formatSats(cost)} sats`);
     } catch (err) {
@@ -1540,7 +1541,8 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
     }
     setLoading(true);
     try {
-      await api.placeOrder(market.id, side, price, totalPayout);
+      // Pass priceSats (500) not price (50) - backend expects sats/share
+      await api.placeOrder(market.id, side, priceSats, totalPayout);
       await onRefresh();
     } catch (err) {
       alert(err.message);
