@@ -91,7 +91,7 @@ function useAuth() {
 
 // ==================== COMPONENTS ====================
 
-function Header({ user, onLogout, onShowWallet, onShowPortfolio, onShowProfile, onShowAdmin, onShowBotAdmin, onShowUserAdmin, onShowLogin }) {
+function Header({ user, onLogout, onShowWallet, onShowPortfolio, onShowProfile, onShowAdmin, onShowBotAdmin, onShowUserAdmin, onShowLogin, onGoHome }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleMobileAction = (action) => {
@@ -101,8 +101,8 @@ function Header({ user, onLogout, onShowWallet, onShowPortfolio, onShowProfile, 
 
   return (
     <header className="header">
-      <div className="header-left">
-        <h1>₿ Bitcoin Chess 960 Championship</h1>
+      <div className="header-left" onClick={onGoHome} style={{ cursor: 'pointer' }}>
+        <h1>₿itcoin Chess 960 Championship</h1>
         <span className="header-date">Prospera • March 16-22, 2026</span>
       </div>
       <div className="header-right">
@@ -2779,6 +2779,10 @@ function App() {
         onShowBotAdmin={() => setShowBotAdmin(true)}
         onShowUserAdmin={() => setShowUserAdmin(true)}
         onShowLogin={() => setShowLogin(true)}
+        onGoHome={() => {
+          setSelectedMarket(null);
+          setShowWhatsThePoint(false);
+        }}
       />
 
       <main className="main">
