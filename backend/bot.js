@@ -1790,6 +1790,80 @@ function getDeploymentPreviewTwoSided(userId) {
   const totalCost = totalYesCost + totalNoCost;
   const hasBalance = effectiveBalance >= totalCost;
   
+  // Calculate auto-matches for NO orders (match existing YES orders)
+  const noOrdersFlat = marketPreviews.flatMap(m => m.disabled ? [] : m.noOrders.map(o => ({
+    ...o,
+    market_id: m.market_id,
+    grandmaster_name: m.grandmaster_name
+  })));
+  const noAutoMatches = calculateAutoMatchesForDeployment(marketPreviews.map(m => ({
+    ...m,
+    orders: m.noOrders // Use noOrders for NO-side matching
+  })));
+  
+  // Calculate auto-matches for YES orders (match existing NO orders)
+  // For YES orders, we need to check against NO orders in the book
+  const yesAutoMatches = { has_auto_matches: false, total_match_amount: 0, total_match_cost: 0, matches_by_market: [] };
+  for (const market of marketPreviews) {
+    if (market.disabled || market.yesOrders.length === 0) continue;
+    
+    // Get existing NO orders for this market
+    const existingNoOrders = db.prepare(`
+      SELECT id, price_cents, amount_sats, filled_sats
+      FROM orders WHERE market_id = ? AND side = 'no' AND status IN ('open', 'partial')
+      ORDER BY price_cents ASC, created_at ASC
+    `).all(market.market_id);
+    
+    if (existingNoOrders.length === 0) continue;
+    
+    const availableByNo = new Map();
+    for (const noOrder of existingNoOrders) {
+      availableByNo.set(noOrder.id, noOrder.amount_sats - noOrder.filled_sats);
+    }
+    
+    const marketMatches = [];
+    let marketMatchAmount = 0, marketMatchCost = 0;
+    
+    for (const yesOrder of market.yesOrders) {
+      const yesPrice = yesOrder.price;
+      const maxNoPriceToMatch = 100 - yesPrice;
+      let remainingAmount = yesOrder.amount;
+      let orderMatchAmount = 0, orderMatchCost = 0;
+      const matchDetails = [];
+      
+      for (const noOrder of existingNoOrders) {
+        if (remainingAmount <= 0) break;
+        if (noOrder.price_cents > maxNoPriceToMatch) continue;
+        
+        const available = availableByNo.get(noOrder.id);
+        if (available <= 0) continue;
+        
+        const matchAmount = Math.min(remainingAmount, available);
+        const matchCost = Math.ceil(matchAmount * (100 - noOrder.price_cents) / 100);
+        
+        availableByNo.set(noOrder.id, available - matchAmount);
+        orderMatchAmount += matchAmount;
+        orderMatchCost += matchCost;
+        remainingAmount -= matchAmount;
+        
+        matchDetails.push({ no_order_id: noOrder.id, no_price: noOrder.price_cents, match_amount: matchAmount, match_cost: matchCost });
+      }
+      
+      if (orderMatchAmount > 0) {
+        marketMatches.push({ order_price: yesPrice, order_amount: yesOrder.amount, match_amount: orderMatchAmount, match_cost: orderMatchCost, matching_orders: matchDetails });
+        marketMatchAmount += orderMatchAmount;
+        marketMatchCost += orderMatchCost;
+      }
+    }
+    
+    if (marketMatches.length > 0) {
+      yesAutoMatches.has_auto_matches = true;
+      yesAutoMatches.total_match_amount += marketMatchAmount;
+      yesAutoMatches.total_match_cost += marketMatchCost;
+      yesAutoMatches.matches_by_market.push({ market_id: market.market_id, grandmaster_name: market.grandmaster_name, matches: marketMatches });
+    }
+  }
+  
   return {
     success: true,
     user_balance: user.balance_sats,
@@ -1819,6 +1893,14 @@ function getDeploymentPreviewTwoSided(userId) {
     has_sufficient_balance: hasBalance,
     shortfall: hasBalance ? 0 : totalCost - effectiveBalance,
     markets: marketPreviews,
+    // Auto-match warnings
+    auto_matches: {
+      no_side: noAutoMatches,
+      yes_side: yesAutoMatches,
+      has_any_matches: noAutoMatches.has_auto_matches || yesAutoMatches.has_auto_matches,
+      total_match_amount: noAutoMatches.total_match_amount + yesAutoMatches.total_match_amount,
+      total_match_cost: noAutoMatches.total_match_cost + yesAutoMatches.total_match_cost
+    },
     config: {
       max_acceptable_loss: config.max_acceptable_loss,
       global_multiplier: config.global_multiplier,
