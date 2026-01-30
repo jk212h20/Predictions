@@ -365,8 +365,7 @@ db.exec(`
     pause_reason TEXT,
     paused_by TEXT,
     paused_at TEXT,
-    updated_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (paused_by) REFERENCES users(id)
+    updated_at TEXT DEFAULT (datetime('now'))
   );
 `);
 
@@ -520,18 +519,55 @@ try {
   console.log('Bets column migration skipped:', e.message);
 }
 
-// Migration: Create withdrawal_settings table if missing
+// Migration: Fix withdrawal_settings table - remove foreign key constraint
+// The old table may have FOREIGN KEY (paused_by) REFERENCES users(id) which causes errors
 try {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS withdrawal_settings (
-      id TEXT PRIMARY KEY DEFAULT 'default',
-      auto_withdraw_paused INTEGER DEFAULT 0,
-      pause_reason TEXT,
-      paused_by TEXT,
-      paused_at TEXT,
-      updated_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
+  // Check if the table exists with a foreign key that's causing issues
+  const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='withdrawal_settings'").get();
+  
+  if (tableInfo && tableInfo.sql && tableInfo.sql.includes('FOREIGN KEY')) {
+    console.log('Migrating withdrawal_settings to remove foreign key...');
+    
+    // Backup existing data
+    const existingData = db.prepare('SELECT * FROM withdrawal_settings').all();
+    
+    // Drop the old table
+    db.exec('DROP TABLE withdrawal_settings');
+    
+    // Create new table without foreign key
+    db.exec(`
+      CREATE TABLE withdrawal_settings (
+        id TEXT PRIMARY KEY DEFAULT 'default',
+        auto_withdraw_paused INTEGER DEFAULT 0,
+        pause_reason TEXT,
+        paused_by TEXT,
+        paused_at TEXT,
+        updated_at TEXT DEFAULT (datetime('now'))
+      )
+    `);
+    
+    // Restore data
+    for (const row of existingData) {
+      db.prepare(`
+        INSERT INTO withdrawal_settings (id, auto_withdraw_paused, pause_reason, paused_by, paused_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(row.id, row.auto_withdraw_paused, row.pause_reason, row.paused_by, row.paused_at, row.updated_at);
+    }
+    
+    console.log('withdrawal_settings migration complete');
+  } else {
+    // Just ensure the table exists
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS withdrawal_settings (
+        id TEXT PRIMARY KEY DEFAULT 'default',
+        auto_withdraw_paused INTEGER DEFAULT 0,
+        pause_reason TEXT,
+        paused_by TEXT,
+        paused_at TEXT,
+        updated_at TEXT DEFAULT (datetime('now'))
+      )
+    `);
+  }
 } catch (e) {
   console.log('withdrawal_settings table check:', e.message);
 }
