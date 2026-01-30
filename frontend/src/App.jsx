@@ -1737,7 +1737,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
             <h3>Recent Trades</h3>
             {market.recentTrades.map((t, i) => (
               <div key={i} className="trade-row">
-                <span className="trade-price">{t.price_sats}%</span>
+                <span className="trade-price">{formatSats(t.price_sats * 10)} sats/share</span>
                 <span className="trade-shares">{satsToShares(t.amount_sats)} share{satsToShares(t.amount_sats) !== 1 ? 's' : ''}</span>
                 <span className="trade-time">{new Date(t.created_at).toLocaleString()}</span>
               </div>
