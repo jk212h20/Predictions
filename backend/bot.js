@@ -1489,12 +1489,108 @@ function deployAllOrdersTwoSided(userId) {
     scaleFactor = effectiveBalance / totalTheoreticCost;
   }
   
-  // Step 8: Place orders
+  // Apply scaling to YES orders
+  const scaledYesOrders = allYesOrders.map(order => {
+    const scaledAmount = Math.floor(order.amount * scaleFactor);
+    return { ...order, amount: scaledAmount, cost: Math.ceil(scaledAmount * order.price / 100) };
+  }).filter(o => o.amount >= 100);
+  
+  // Apply scaling to NO orders  
+  const scaledNoOrders = allNoOrders.map(order => {
+    const scaledAmount = Math.floor(order.amount * scaleFactor);
+    return { ...order, amount: scaledAmount, cost: Math.ceil(scaledAmount * (100 - order.price) / 100) };
+  }).filter(o => o.amount >= 100);
+  
+  // Step 8: Execute auto-matches for NO orders (they match existing YES orders)
+  const { adjustedOrders: adjustedNoOrders, matchResults: noMatchResults } = executeAutoMatchesForOrders(userId, scaledNoOrders);
+  
+  // Step 9: Execute auto-matches for YES orders (using similar logic but for YES side)
+  // YES orders match existing NO orders where NO_price <= (100 - YES_price)
+  const yesMatchResults = { totalMatched: 0, totalMatchCost: 0, betsCreated: [], ordersFullyMatched: 0 };
+  const adjustedYesOrders = [];
+  
+  // Group YES orders by market
+  const yesByMarket = new Map();
+  for (const order of scaledYesOrders) {
+    if (!yesByMarket.has(order.marketId)) yesByMarket.set(order.marketId, []);
+    yesByMarket.get(order.marketId).push(order);
+  }
+  
+  for (const [marketId, marketOrders] of yesByMarket) {
+    // Get NO orders for this market
+    const noOrders = db.prepare(`
+      SELECT * FROM orders WHERE market_id = ? AND side = 'no' AND status IN ('open', 'partial')
+      ORDER BY price_cents ASC, created_at ASC
+    `).all(marketId);
+    
+    if (noOrders.length === 0) {
+      adjustedYesOrders.push(...marketOrders);
+      continue;
+    }
+    
+    const availableByNoOrder = new Map();
+    for (const noOrder of noOrders) {
+      availableByNoOrder.set(noOrder.id, { order: noOrder, available: noOrder.amount_sats - noOrder.filled_sats });
+    }
+    
+    // Sort YES orders by price ASC (lowest prices match first)
+    const sortedOrders = [...marketOrders].sort((a, b) => a.price - b.price);
+    
+    for (const proposedOrder of sortedOrders) {
+      const yesPrice = proposedOrder.price;
+      let remainingAmount = proposedOrder.amount;
+      const maxNoPriceToMatch = 100 - yesPrice; // NO orders at this price or lower match
+      
+      for (const noOrder of noOrders) {
+        if (remainingAmount <= 0) break;
+        if (noOrder.price_cents > maxNoPriceToMatch) continue;
+        
+        const noData = availableByNoOrder.get(noOrder.id);
+        if (noData.available <= 0) continue;
+        
+        const matchAmount = Math.min(remainingAmount, noData.available);
+        const tradePrice = noOrder.price_cents;
+        const matchCost = Math.ceil(matchAmount * (100 - tradePrice) / 100); // YES pays 100 - NO_price
+        
+        const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
+        if (user.balance_sats < matchCost) continue;
+        
+        const betId = uuidv4();
+        db.prepare(`
+          INSERT INTO bets (id, market_id, yes_user_id, no_user_id, price_cents, amount_sats)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(betId, marketId, userId, noOrder.user_id, 100 - tradePrice, matchAmount);
+        
+        const newFilled = noOrder.filled_sats + matchAmount;
+        const newStatus = newFilled >= noOrder.amount_sats ? 'filled' : 'partial';
+        db.prepare('UPDATE orders SET filled_sats = ?, status = ?, updated_at = datetime(\'now\') WHERE id = ?')
+          .run(newFilled, newStatus, noOrder.id);
+        
+        noOrder.filled_sats = newFilled;
+        noData.available -= matchAmount;
+        
+        db.prepare('UPDATE users SET balance_sats = balance_sats - ? WHERE id = ?').run(matchCost, userId);
+        
+        yesMatchResults.totalMatched += matchAmount;
+        yesMatchResults.totalMatchCost += matchCost;
+        yesMatchResults.betsCreated.push({ betId, marketId, amount: matchAmount, price: 100 - tradePrice });
+        remainingAmount -= matchAmount;
+      }
+      
+      if (remainingAmount > 0) {
+        adjustedYesOrders.push({ ...proposedOrder, amount: remainingAmount, cost: Math.ceil(remainingAmount * proposedOrder.price / 100) });
+      } else {
+        yesMatchResults.ordersFullyMatched++;
+      }
+    }
+  }
+  
+  // Step 10: Place remaining orders
   const results = { 
     deployed: 0, 
     totalYesOrders: 0,
     totalNoOrders: 0,
-    totalCost: 0, 
+    totalCost: noMatchResults.totalMatchCost + yesMatchResults.totalMatchCost,
     totalRefunded: totalRefund,
     effectiveBalance,
     maxBudget,
@@ -1502,17 +1598,18 @@ function deployAllOrdersTwoSided(userId) {
     pullbackRatio,
     deployableBudget,
     currentExposure,
-    annihilatedValue: exposureData.totalAnnihilated
+    annihilatedValue: exposureData.totalAnnihilated,
+    // Matching info
+    matchedAmount: noMatchResults.totalMatched + yesMatchResults.totalMatched,
+    betsCreated: noMatchResults.betsCreated.length + yesMatchResults.betsCreated.length
   };
   const marketOrderCounts = {};
   
-  // Place YES orders
-  for (const order of allYesOrders) {
-    const scaledAmount = Math.floor(order.amount * scaleFactor);
-    if (scaledAmount < 100) continue;
+  // Place remaining YES orders
+  for (const order of adjustedYesOrders) {
+    if (order.amount < 100) continue;
     
-    const actualCost = Math.ceil(scaledAmount * order.price / 100);
-    
+    const actualCost = order.cost;
     const currentUser = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
     if (currentUser.balance_sats < actualCost) continue;
     
@@ -1520,7 +1617,7 @@ function deployAllOrdersTwoSided(userId) {
     db.prepare(`
       INSERT INTO orders (id, user_id, market_id, side, price_cents, amount_sats, filled_sats, status)
       VALUES (?, ?, ?, 'yes', ?, ?, 0, 'open')
-    `).run(orderId, userId, order.marketId, order.price, scaledAmount);
+    `).run(orderId, userId, order.marketId, order.price, order.amount);
     
     db.prepare('UPDATE users SET balance_sats = balance_sats - ? WHERE id = ?').run(actualCost, userId);
     
@@ -1531,13 +1628,11 @@ function deployAllOrdersTwoSided(userId) {
     marketOrderCounts[order.marketId].yes++;
   }
   
-  // Place NO orders
-  for (const order of allNoOrders) {
-    const scaledAmount = Math.floor(order.amount * scaleFactor);
-    if (scaledAmount < 100) continue;
+  // Place remaining NO orders
+  for (const order of adjustedNoOrders) {
+    if (order.amount < 100) continue;
     
-    const actualCost = Math.ceil(scaledAmount * (100 - order.price) / 100);
-    
+    const actualCost = order.cost;
     const currentUser = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
     if (currentUser.balance_sats < actualCost) continue;
     
@@ -1545,7 +1640,7 @@ function deployAllOrdersTwoSided(userId) {
     db.prepare(`
       INSERT INTO orders (id, user_id, market_id, side, price_cents, amount_sats, filled_sats, status)
       VALUES (?, ?, ?, 'no', ?, ?, 0, 'open')
-    `).run(orderId, userId, order.marketId, order.price, scaledAmount);
+    `).run(orderId, userId, order.marketId, order.price, order.amount);
     
     db.prepare('UPDATE users SET balance_sats = balance_sats - ? WHERE id = ?').run(actualCost, userId);
     
