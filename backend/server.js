@@ -4033,6 +4033,95 @@ app.post('/api/admin/reset-database', authMiddleware, adminMiddleware, async (re
   }
 });
 
+// ==================== DATABASE RESTORE (ADMIN) ====================
+// List available backups
+app.get('/api/admin/backups', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    // Find all backup tables
+    const tables = db.prepare(`
+      SELECT name FROM sqlite_master 
+      WHERE type='table' AND name LIKE '%_backup_%'
+      ORDER BY name DESC
+    `).all();
+    
+    // Group by timestamp
+    const backups = {};
+    for (const t of tables) {
+      const match = t.name.match(/_backup_(\d{14})$/);
+      if (match) {
+        const ts = match[1];
+        if (!backups[ts]) backups[ts] = [];
+        backups[ts].push(t.name.replace(`_backup_${ts}`, ''));
+      }
+    }
+    
+    res.json({
+      backups: Object.entries(backups).map(([timestamp, tables]) => ({
+        timestamp,
+        date: `${timestamp.slice(0,4)}-${timestamp.slice(4,6)}-${timestamp.slice(6,8)} ${timestamp.slice(8,10)}:${timestamp.slice(10,12)}:${timestamp.slice(12,14)}`,
+        tables
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to list backups', message: err.message });
+  }
+});
+
+// Restore from backup
+app.post('/api/admin/restore-database', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const { timestamp, confirm_code } = req.body;
+    
+    if (confirm_code !== 'restore789') {
+      return res.status(400).json({ 
+        error: 'Confirmation required',
+        message: 'Send { timestamp: "YYYYMMDDHHMMSS", confirm_code: "restore789" }'
+      });
+    }
+    
+    if (!timestamp || !/^\d{14}$/.test(timestamp)) {
+      return res.status(400).json({ error: 'Invalid timestamp format. Use YYYYMMDDHHMMSS' });
+    }
+    
+    // Find backup tables with this timestamp
+    const backupTables = db.prepare(`
+      SELECT name FROM sqlite_master 
+      WHERE type='table' AND name LIKE '%_backup_${timestamp}'
+    `).all();
+    
+    if (backupTables.length === 0) {
+      return res.status(404).json({ error: 'No backup found for this timestamp' });
+    }
+    
+    const restored = [];
+    const errors = [];
+    
+    for (const bt of backupTables) {
+      const originalName = bt.name.replace(`_backup_${timestamp}`, '');
+      try {
+        // Drop current table if exists
+        db.exec(`DROP TABLE IF EXISTS ${originalName}`);
+        // Rename backup to original
+        db.exec(`ALTER TABLE ${bt.name} RENAME TO ${originalName}`);
+        const count = db.prepare(`SELECT COUNT(*) as c FROM ${originalName}`).get().c;
+        restored.push({ table: originalName, rows: count });
+      } catch (e) {
+        errors.push({ table: originalName, error: e.message });
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: 'Database restored from backup',
+      timestamp,
+      restored,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Restore failed', message: err.message });
+  }
+});
+
 // ==================== HEALTH CHECK ====================
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

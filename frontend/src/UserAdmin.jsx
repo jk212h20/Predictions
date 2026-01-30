@@ -60,6 +60,10 @@ export default function UserAdmin({ currentUserId, onBalanceChange }) {
   const [showResetDbModal, setShowResetDbModal] = useState(false);
   const [resetDbPassword, setResetDbPassword] = useState('');
   const [resetDbResult, setResetDbResult] = useState(null);
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [restorePassword, setRestorePassword] = useState('');
+  const [availableBackups, setAvailableBackups] = useState([]);
+  const [selectedBackup, setSelectedBackup] = useState('');
 
   // Load stats
   const loadStats = useCallback(async () => {
@@ -290,6 +294,20 @@ export default function UserAdmin({ currentUserId, onBalanceChange }) {
         <div className="stat-card danger-card">
           <button className="danger-btn" onClick={() => setShowResetDbModal(true)}>
             ☢️ Reset Database
+          </button>
+          <button className="restore-btn" onClick={async () => {
+            try {
+              const response = await fetch('/api/admin/backups', {
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+              });
+              const data = await response.json();
+              setAvailableBackups(data.backups || []);
+              setShowRestoreModal(true);
+            } catch (err) {
+              setError('Failed to load backups: ' + err.message);
+            }
+          }} style={{ marginTop: '5px', backgroundColor: '#4caf50' }}>
+            🔄 Restore Backup
           </button>
         </div>
       </div>
@@ -755,6 +773,84 @@ export default function UserAdmin({ currentUserId, onBalanceChange }) {
                 style={{ backgroundColor: '#ff2222' }}
               >
                 {actionLoading ? 'RESETTING...' : '☢️ NUKE DATABASE'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {showRestoreModal && (
+        <div className="modal-overlay" onClick={() => setShowRestoreModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>🔄 RESTORE FROM BACKUP</h3>
+            <p style={{ color: '#4caf50', fontWeight: 'bold' }}>
+              Select a backup to restore:
+            </p>
+            {availableBackups.length === 0 ? (
+              <p style={{ color: '#888' }}>No backups available.</p>
+            ) : (
+              <div className="form-group">
+                <label>Available Backups:</label>
+                <select 
+                  value={selectedBackup} 
+                  onChange={(e) => setSelectedBackup(e.target.value)}
+                  style={{ width: '100%', padding: '8px' }}
+                >
+                  <option value="">-- Select a backup --</option>
+                  {availableBackups.map(b => (
+                    <option key={b.timestamp} value={b.timestamp}>
+                      {b.date} ({b.tables.length} tables)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="form-group">
+              <label>Enter password to confirm (restore789):</label>
+              <input
+                type="password"
+                value={restorePassword}
+                onChange={(e) => setRestorePassword(e.target.value)}
+                placeholder="Enter restore password"
+                autoComplete="off"
+              />
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => { setShowRestoreModal(false); setRestorePassword(''); setSelectedBackup(''); }}>Cancel</button>
+              <button 
+                className="primary" 
+                onClick={async () => {
+                  if (!selectedBackup) {
+                    setError('Please select a backup');
+                    return;
+                  }
+                  setActionLoading(true);
+                  try {
+                    const response = await fetch('/api/admin/restore-database', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                      },
+                      body: JSON.stringify({ timestamp: selectedBackup, confirm_code: restorePassword })
+                    });
+                    const data = await response.json();
+                    if (!response.ok) {
+                      setError(data.message || data.error || 'Restore failed');
+                    } else {
+                      alert(`Database restored! ${data.restored.length} tables recovered. Page will reload.`);
+                      window.location.reload();
+                    }
+                  } catch (err) {
+                    setError(err.message);
+                  } finally {
+                    setActionLoading(false);
+                  }
+                }} 
+                disabled={actionLoading || !selectedBackup || !restorePassword}
+                style={{ backgroundColor: '#4caf50' }}
+              >
+                {actionLoading ? 'RESTORING...' : '🔄 RESTORE BACKUP'}
               </button>
             </div>
           </div>
