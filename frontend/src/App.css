@@ -5398,6 +5398,9 @@ tr.status-lost {
 .user-table .balance {
   font-weight: 600;
   color: var(--accent);
+  background: none;
+  padding: 0;
+  border-radius: 0;
 }
 
 .user-table .badge {
