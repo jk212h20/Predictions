@@ -4187,6 +4187,8 @@ app.put('/api/admin/withdrawals/settings', authMiddleware, adminMiddleware, (req
   try {
     const { auto_withdraw_paused, pause_reason } = req.body;
     
+    console.log('PUT /api/admin/withdrawals/settings called with:', { auto_withdraw_paused, pause_reason, user_id: req.user?.id });
+    
     if (auto_withdraw_paused === undefined) {
       return res.status(400).json({ error: 'auto_withdraw_paused is required' });
     }
@@ -4194,10 +4196,13 @@ app.put('/api/admin/withdrawals/settings', authMiddleware, adminMiddleware, (req
     const paused = auto_withdraw_paused ? 1 : 0;
     
     // Ensure settings row exists
-    getWithdrawalSettings();
+    console.log('Calling getWithdrawalSettings...');
+    const currentSettings = getWithdrawalSettings();
+    console.log('Current settings:', currentSettings);
     
     // Update settings
     if (paused) {
+      console.log('Updating to paused state...');
       db.prepare(`
         UPDATE withdrawal_settings 
         SET auto_withdraw_paused = 1, 
@@ -4208,6 +4213,7 @@ app.put('/api/admin/withdrawals/settings', authMiddleware, adminMiddleware, (req
         WHERE id = 'default'
       `).run(pause_reason || 'Paused by admin', req.user.id);
     } else {
+      console.log('Updating to resumed state...');
       db.prepare(`
         UPDATE withdrawal_settings 
         SET auto_withdraw_paused = 0, 
@@ -4220,6 +4226,7 @@ app.put('/api/admin/withdrawals/settings', authMiddleware, adminMiddleware, (req
     }
     
     const settings = getWithdrawalSettings();
+    console.log('Updated settings:', settings);
     
     res.json({ 
       success: true, 
@@ -4229,7 +4236,8 @@ app.put('/api/admin/withdrawals/settings', authMiddleware, adminMiddleware, (req
         : 'Auto-withdrawals RESUMED - eligible withdrawals will process automatically'
     });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update withdrawal settings', message: err.message });
+    console.error('PUT /api/admin/withdrawals/settings ERROR:', err);
+    res.status(500).json({ error: 'Failed to update withdrawal settings: ' + err.message, message: err.message });
   }
 });
 
