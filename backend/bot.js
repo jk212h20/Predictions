@@ -2717,7 +2717,13 @@ function calculatePotentialMatch(marketId, noPrice, amount) {
 
 /**
  * Calculate all potential auto-matches for a deployment preview
- * This analyzes each proposed order and checks if it would immediately match
+ * 
+ * FIXED: Now simulates actual matching behavior by:
+ * 1. Getting the order book ONCE per market
+ * 2. Tracking consumed amounts as each proposed order "matches"
+ * 3. Processing proposed NO orders in price priority order (best prices first)
+ * 
+ * This ensures the preview matches EXACTLY what would happen if orders were placed.
  * 
  * @param {Array} marketPreviews - Array of market preview objects with orders
  * @returns {object} Auto-match summary
@@ -2733,25 +2739,87 @@ function calculateAutoMatchesForDeployment(marketPreviews) {
       continue;
     }
     
+    // Step 1: Get ALL YES orders for this market ONCE
+    // This is the "order book snapshot" we'll match against
+    const yesOrders = db.prepare(`
+      SELECT id, price_cents, amount_sats, filled_sats
+      FROM orders
+      WHERE market_id = ? 
+        AND side = 'yes' 
+        AND status IN ('open', 'partial')
+      ORDER BY price_cents DESC, created_at ASC
+    `).all(market.market_id);
+    
+    if (yesOrders.length === 0) {
+      continue; // No YES orders to match against
+    }
+    
+    // Step 2: Track available amounts for each YES order (simulate consumption)
+    // Key: order_id, Value: remaining available sats
+    const availableByYesOrder = new Map();
+    for (const yesOrder of yesOrders) {
+      availableByYesOrder.set(yesOrder.id, yesOrder.amount_sats - yesOrder.filled_sats);
+    }
+    
+    // Step 3: Sort proposed NO orders by price DESC (best prices match first)
+    // This matches actual matching engine behavior: orders at better prices get priority
+    const sortedNoOrders = [...market.orders].sort((a, b) => b.price - a.price);
+    
     const marketMatches = [];
     let marketMatchAmount = 0;
     let marketMatchCost = 0;
     
-    for (const order of market.orders) {
-      const match = calculatePotentialMatch(market.market_id, order.price, order.amount);
+    // Step 4: Process each proposed NO order, consuming from the shared pool
+    for (const proposedOrder of sortedNoOrders) {
+      const noPrice = proposedOrder.price;
+      let remainingAmount = proposedOrder.amount;
+      let orderMatchAmount = 0;
+      let orderMatchCost = 0;
+      const matchingOrderDetails = [];
       
-      if (match.would_match) {
+      // Find YES orders that would match (YES price >= NO price)
+      for (const yesOrder of yesOrders) {
+        if (remainingAmount <= 0) break;
+        if (yesOrder.price_cents < noPrice) continue; // Won't match
+        
+        // Get CURRENT available (may have been consumed by previous proposed orders)
+        const available = availableByYesOrder.get(yesOrder.id);
+        if (available <= 0) continue;
+        
+        const matchAmount = Math.min(remainingAmount, available);
+        
+        // Calculate cost (NO pays 100 - trade_price where trade_price = YES order's price)
+        const tradePrice = yesOrder.price_cents;
+        const matchCost = Math.ceil(matchAmount * (100 - tradePrice) / 100);
+        
+        // "Consume" this amount from the YES order (for subsequent proposed orders)
+        availableByYesOrder.set(yesOrder.id, available - matchAmount);
+        
+        orderMatchAmount += matchAmount;
+        orderMatchCost += matchCost;
+        remainingAmount -= matchAmount;
+        
+        matchingOrderDetails.push({
+          order_id: yesOrder.id,
+          yes_price: yesOrder.price_cents,
+          available_before: available,
+          match_amount: matchAmount,
+          match_cost: matchCost
+        });
+      }
+      
+      if (orderMatchAmount > 0) {
         marketMatches.push({
-          order_price: order.price,
-          order_amount: order.amount,
-          match_amount: match.match_amount,
-          match_cost: match.match_cost,
-          remaining: match.remaining_as_order,
-          matching_orders: match.matching_orders
+          order_price: proposedOrder.price,
+          order_amount: proposedOrder.amount,
+          match_amount: orderMatchAmount,
+          match_cost: orderMatchCost,
+          remaining: proposedOrder.amount - orderMatchAmount,
+          matching_orders: matchingOrderDetails
         });
         
-        marketMatchAmount += match.match_amount;
-        marketMatchCost += match.match_cost;
+        marketMatchAmount += orderMatchAmount;
+        marketMatchCost += orderMatchCost;
       }
     }
     

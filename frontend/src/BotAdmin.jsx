@@ -73,6 +73,9 @@ export default function BotAdmin({ onClose }) {
   // Saved custom curves
   const [savedCurves, setSavedCurves] = useState([]);
   
+  // Two-sided liquidity: crossover point (prices < crossover are YES, >= crossover are NO)
+  const [crossoverPoint, setCrossoverPoint] = useState(25);
+  
   // Tier management state
   const [tiers, setTiers] = useState([]);
   const [loadingTiers, setLoadingTiers] = useState(false);
@@ -590,9 +593,59 @@ export default function BotAdmin({ onClose }) {
             <div className="bot-curve-editor">
               <div className="curve-info">
                 <p>
-                  <strong>Shape your curve!</strong> Drag bars to adjust. Bars show <strong>percentages that total 100%</strong>.
-                  Points at 0% stay at 0% when you adjust others. Add points at any price, delete points you don't need.
+                  <strong>Two-Sided Market Making!</strong> Drag bars to adjust allocation. 
+                  <span className="yes-text">🟢 YES orders</span> (below crossover) attract buyers who think it'll happen.
+                  <span className="no-text">🔴 NO orders</span> (above crossover) attract buyers who think it won't.
+                  The crossover point divides your liquidity between both sides.
                 </p>
+              </div>
+
+              {/* CROSSOVER SLIDER */}
+              <div className="crossover-control">
+                <div className="crossover-header">
+                  <label>⚖️ Crossover Point: <strong>{crossoverPoint}%</strong></label>
+                  <span className="crossover-hint">Prices below → YES orders • Prices at/above → NO orders</span>
+                </div>
+                <div className="crossover-slider-container">
+                  <span className="slider-label yes">YES</span>
+                  <input 
+                    type="range"
+                    min="5"
+                    max="50"
+                    step="1"
+                    value={crossoverPoint}
+                    onChange={e => setCrossoverPoint(parseInt(e.target.value))}
+                    className="crossover-slider"
+                  />
+                  <span className="slider-label no">NO</span>
+                </div>
+                <div className="crossover-stats">
+                  <div className="stat yes">
+                    <span className="stat-label">🟢 YES Budget:</span>
+                    <span className="stat-value">
+                      {(curvePoints.filter(p => p.price < crossoverPoint).reduce((s, p) => s + (p.weight || 0), 0) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="stat no">
+                    <span className="stat-label">🔴 NO Budget:</span>
+                    <span className="stat-value">
+                      {(curvePoints.filter(p => p.price >= crossoverPoint).reduce((s, p) => s + (p.weight || 0), 0) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="stat spread">
+                    <span className="stat-label">📊 Spread:</span>
+                    <span className="stat-value">
+                      {(() => {
+                        const yesPoints = curvePoints.filter(p => p.price < crossoverPoint && (p.weight || 0) > 0.005);
+                        const noPoints = curvePoints.filter(p => p.price >= crossoverPoint && (p.weight || 0) > 0.005);
+                        if (yesPoints.length === 0 || noPoints.length === 0) return 'N/A';
+                        const highestYes = Math.max(...yesPoints.map(p => p.price));
+                        const lowestNo = Math.min(...noPoints.map(p => p.price));
+                        return `${lowestNo - highestYes}% (${highestYes}% → ${lowestNo}%)`;
+                      })()}
+                    </span>
+                  </div>
+                </div>
               </div>
 
               {/* PRESET BUTTONS */}
@@ -831,7 +884,7 @@ export default function BotAdmin({ onClose }) {
                           ×
                         </button>
                         <div 
-                          className="curve-bar-fill"
+                          className={`curve-bar-fill ${point.price < crossoverPoint ? 'yes-side' : 'no-side'}`}
                           style={{ height: `${heightPercent}%` }}
                         >
                           <span className="bar-amount">{weight > 0.005 ? `${displayPercent}%` : ''}</span>

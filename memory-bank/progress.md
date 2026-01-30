@@ -1,8 +1,25 @@
 # Progress - Predictions Market Maker Bot
 
-## Latest Update: 2026-01-29 - On-Chain Bitcoin Support
+## Latest Update: 2026-01-29 - Auto-Match Preview Bug Fix
 
 ### Latest Changes
+1. **Fixed Auto-Match Preview Bug** - calculateAutoMatchesForDeployment was counting the same YES order multiple times
+   - **Root cause**: Each proposed NO order independently queried the full order book, not tracking consumption
+   - **Fix**: Now simulates actual matching by getting order book ONCE and tracking consumed amounts
+   - **Result**: Preview now shows EXACT same result as actual deployment would produce
+2. **IMPORTANT PRINCIPLE**: Previews must ALWAYS use the EXACT same logic as the actual operation
+
+### Pending Investigation: Non-1000 Multiple in Match Amount
+- **Symptom**: Match amount was 22,294 sats (not divisible by 1000 = not whole shares)
+- **YES order was**: 7 shares (7000 sats) - definitely whole shares
+- **Expected**: All matches should be multiples of 1000 sats (1 share = 1000 sats)
+- **Status**: TBD - need to investigate where non-whole-share amounts are coming from
+- **Possibilities**: 
+  - Bug in proposed NO order amount generation (should all be shares × 1000)
+  - Bug in frontend display (showing wrong field?)
+  - Past partial fills left non-1000 remainders (shouldn't happen with whole-share orders)
+
+### Previous Update: On-Chain Bitcoin Support
 1. **On-Chain Bitcoin Deposits** - Users can generate Bitcoin addresses, receive on-chain deposits
 2. **On-Chain Bitcoin Withdrawals** - All go to admin queue for approval (first 10 free)
 3. **Atomic Transactions** - On-chain withdrawals use SQLite transactions to prevent lost funds
