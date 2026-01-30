@@ -2085,6 +2085,107 @@ function updateExposure(newExposure) {
   };
 }
 
+// ==================== ORDER MATCHING (SHARED LOGIC) ====================
+
+/**
+ * Place an order WITH full matching logic (same as server.js /api/orders)
+ * This ensures bot orders execute matches immediately instead of just resting.
+ * 
+ * @param {string} userId - User placing the order
+ * @param {string} marketId - Market ID
+ * @param {string} side - 'yes' or 'no'
+ * @param {number} priceCents - Price in cents (1-99)
+ * @param {number} amountSats - Amount in sats
+ * @returns {object} Result with order details and any matches
+ */
+function placeOrderWithMatching(userId, marketId, side, priceCents, amountSats) {
+  // Calculate cost
+  const cost = side === 'yes' 
+    ? Math.ceil(amountSats * priceCents / 100)
+    : Math.ceil(amountSats * (100 - priceCents) / 100);
+  
+  // Check balance
+  const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
+  if (!user || user.balance_sats < cost) {
+    return { success: false, error: 'Insufficient balance', required: cost, available: user?.balance_sats || 0 };
+  }
+  
+  // Deduct balance
+  const newBalance = user.balance_sats - cost;
+  db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, userId);
+  
+  // Find and match with existing orders
+  let remainingAmount = amountSats;
+  const matchedBets = [];
+  
+  const oppositeSide = side === 'yes' ? 'no' : 'yes';
+  const minComplementPrice = 100 - priceCents;
+  
+  // Get matching orders
+  const potentialMatches = db.prepare(`
+    SELECT * FROM orders
+    WHERE market_id = ? AND side = ? AND status IN ('open', 'partial')
+    AND price_cents >= ?
+    ORDER BY price_cents DESC, created_at ASC
+  `).all(marketId, oppositeSide, minComplementPrice);
+  
+  for (const matchOrder of potentialMatches) {
+    if (remainingAmount <= 0) break;
+    
+    // Re-query to get current state (in case of concurrent access)
+    const currentMatch = db.prepare('SELECT * FROM orders WHERE id = ? AND status IN (\'open\', \'partial\')')
+      .get(matchOrder.id);
+    
+    if (!currentMatch) continue;
+    
+    const matchAvailable = currentMatch.amount_sats - currentMatch.filled_sats;
+    if (matchAvailable <= 0) continue;
+    
+    const matchAmount = Math.min(remainingAmount, matchAvailable);
+    const tradePrice = currentMatch.price_cents;
+    
+    // Create bet
+    const betId = uuidv4();
+    const yesUserId = side === 'yes' ? userId : currentMatch.user_id;
+    const noUserId = side === 'no' ? userId : currentMatch.user_id;
+    
+    db.prepare(`
+      INSERT INTO bets (id, market_id, yes_user_id, no_user_id, price_cents, amount_sats, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'active')
+    `).run(betId, marketId, yesUserId, noUserId, 100 - tradePrice, matchAmount);
+    
+    // Update matched order
+    const newFilled = currentMatch.filled_sats + matchAmount;
+    const newStatus = newFilled >= currentMatch.amount_sats ? 'filled' : 'partial';
+    db.prepare('UPDATE orders SET filled_sats = ?, status = ? WHERE id = ?')
+      .run(newFilled, newStatus, currentMatch.id);
+    
+    remainingAmount -= matchAmount;
+    matchedBets.push({ betId, amount: matchAmount, price: 100 - tradePrice, counterpartyId: currentMatch.user_id });
+  }
+  
+  // Create order for remaining amount
+  const orderId = uuidv4();
+  const orderStatus = remainingAmount === 0 ? 'filled' : 
+                      remainingAmount < amountSats ? 'partial' : 'open';
+  
+  db.prepare(`
+    INSERT INTO orders (id, user_id, market_id, side, price_cents, amount_sats, filled_sats, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(orderId, userId, marketId, side, priceCents, amountSats, amountSats - remainingAmount, orderStatus);
+  
+  return {
+    success: true,
+    orderId,
+    orderStatus,
+    filled: amountSats - remainingAmount,
+    remaining: remainingAmount,
+    cost,
+    newBalance,
+    matchedBets
+  };
+}
+
 // ==================== ORDER MANAGEMENT ====================
 
 /**
@@ -2371,26 +2472,21 @@ function deployAllOrders(userId) {
     const scaledAmount = Math.floor(order.amount * scaleFactor);
     if (scaledAmount < 100) continue; // Skip orders below minimum
     
-    const actualCost = Math.ceil(scaledAmount * (100 - order.price) / 100);
+    // Use placeOrderWithMatching to execute matches immediately
+    const result = placeOrderWithMatching(userId, order.marketId, 'no', order.price, scaledAmount);
     
-    // Check if we have enough balance left
-    const currentUser = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
-    if (currentUser.balance_sats < actualCost) {
-      continue; // Skip if insufficient balance
+    if (!result.success) {
+      continue; // Skip if failed (likely insufficient balance)
     }
     
-    // Place the order
-    const orderId = uuidv4();
-    db.prepare(`
-      INSERT INTO orders (id, user_id, market_id, side, price_cents, amount_sats, filled_sats, status)
-      VALUES (?, ?, ?, 'no', ?, ?, 0, 'open')
-    `).run(orderId, userId, order.marketId, order.price, scaledAmount);
-    
-    // Deduct cost
-    db.prepare('UPDATE users SET balance_sats = balance_sats - ? WHERE id = ?').run(actualCost, userId);
-    
-    results.totalCost += actualCost;
+    results.totalCost += result.cost;
     results.totalOrders++;
+    
+    // Track matches
+    if (result.matchedBets && result.matchedBets.length > 0) {
+      results.totalMatched = (results.totalMatched || 0) + result.filled;
+      results.matchedBets = (results.matchedBets || []).concat(result.matchedBets);
+    }
     
     // Track per-market counts
     if (!marketOrderCounts[order.marketId]) {
