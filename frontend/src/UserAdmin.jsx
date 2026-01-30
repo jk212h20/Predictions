@@ -546,7 +546,7 @@ export default function UserAdmin({ currentUserId, onBalanceChange }) {
                   <tr key={bet.id}>
                     <td>{bet.market_title?.substring(0, 30)}</td>
                     <td><span className={`badge ${bet.user_side}`}>{bet.user_side}</span></td>
-                    <td>{bet.price_cents}%</td>
+                    <td>{bet.price_sats}%</td>
                     <td>{formatSats(bet.amount_sats)}</td>
                     <td><span className={`badge ${bet.status}`}>{bet.status}</span></td>
                   </tr>

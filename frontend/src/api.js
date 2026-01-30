@@ -112,11 +112,11 @@ export const getMarket = (id) =>
   fetch(`${API_BASE}/markets/${id}`).then(handleResponse);
 
 // Orders
-export const placeOrder = (market_id, side, price_cents, amount_sats) =>
+export const placeOrder = (market_id, side, price_sats, amount_sats) =>
   fetch(`${API_BASE}/orders`, {
     method: 'POST',
     headers: getHeaders(),
-    body: JSON.stringify({ market_id, side, price_cents, amount_sats }),
+    body: JSON.stringify({ market_id, side, price_sats, amount_sats }),
   }).then(handleResponse);
 
 export const cancelOrder = (id) =>

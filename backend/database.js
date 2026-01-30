@@ -66,12 +66,14 @@ db.exec(`
   );
 
   -- Orders table (order book)
+  -- price_sats = sats per share this side pays (1-999)
+  -- 1 share = 1000 sats payout to winner
   CREATE TABLE IF NOT EXISTS orders (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     market_id TEXT NOT NULL,
     side TEXT NOT NULL CHECK(side IN ('yes', 'no')),
-    price_cents INTEGER NOT NULL CHECK(price_cents >= 1 AND price_cents <= 99),
+    price_sats INTEGER NOT NULL CHECK(price_sats >= 1 AND price_sats <= 999),
     amount_sats INTEGER NOT NULL,
     filled_sats INTEGER DEFAULT 0,
     status TEXT DEFAULT 'open' CHECK(status IN ('open', 'partial', 'filled', 'cancelled')),
@@ -82,6 +84,8 @@ db.exec(`
   );
 
   -- Bets/Positions table (matched orders become bets)
+  -- price_sats = what YES side paid per share (recorded at trade time)
+  -- 1 share = 1000 sats payout to winner
   CREATE TABLE IF NOT EXISTS bets (
     id TEXT PRIMARY KEY,
     market_id TEXT NOT NULL,
@@ -89,7 +93,7 @@ db.exec(`
     no_user_id TEXT NOT NULL,
     yes_order_id TEXT NOT NULL,
     no_order_id TEXT NOT NULL,
-    price_cents INTEGER NOT NULL,
+    price_sats INTEGER NOT NULL,
     amount_sats INTEGER NOT NULL,
     status TEXT DEFAULT 'active' CHECK(status IN ('active', 'settled', 'refunded')),
     winner_user_id TEXT,
@@ -452,12 +456,55 @@ try {
 
 // Migration: Add crossover_point to bot_curve_shapes for two-sided liquidity
 // The crossover_point determines where the bot switches from YES seller to NO seller
-// Values 5-50 (percentage). Below crossover = YES side, above = NO side
-// Default 25 means: sell YES at prices 5-24%, sell NO at prices 26-50%
+// Values 50-500 (sats). Below crossover = YES side, above = NO side
+// Default 250 means: sell YES at prices 50-240 sats, sell NO at prices 260-500 sats
 try {
-  db.exec(`ALTER TABLE bot_curve_shapes ADD COLUMN crossover_point INTEGER DEFAULT 25`);
+  db.exec(`ALTER TABLE bot_curve_shapes ADD COLUMN crossover_point INTEGER DEFAULT 250`);
 } catch (e) {
   // Column already exists, ignore
+}
+
+// ==================== PRICE_CENTS → PRICE_SATS MIGRATION ====================
+// This migration renames price_cents to price_sats and scales values ×10
+// Old system: price_cents 1-99 (percentage)
+// New system: price_sats 1-999 (sats per share)
+
+// Migration: orders.price_cents → orders.price_sats
+try {
+  // Check if old column exists
+  const ordersInfo = db.prepare("PRAGMA table_info(orders)").all();
+  const hasOldColumn = ordersInfo.some(col => col.name === 'price_cents');
+  const hasNewColumn = ordersInfo.some(col => col.name === 'price_sats');
+  
+  if (hasOldColumn && !hasNewColumn) {
+    console.log('Migrating orders.price_cents → orders.price_sats...');
+    // SQLite 3.25+ supports RENAME COLUMN
+    db.exec(`ALTER TABLE orders RENAME COLUMN price_cents TO price_sats`);
+    // Scale existing values: percentage → sats (multiply by 10)
+    db.exec(`UPDATE orders SET price_sats = price_sats * 10`);
+    console.log('Orders migration complete');
+  }
+} catch (e) {
+  console.log('Orders column migration skipped:', e.message);
+}
+
+// Migration: bets.price_cents → bets.price_sats
+try {
+  // Check if old column exists
+  const betsInfo = db.prepare("PRAGMA table_info(bets)").all();
+  const hasOldColumn = betsInfo.some(col => col.name === 'price_cents');
+  const hasNewColumn = betsInfo.some(col => col.name === 'price_sats');
+  
+  if (hasOldColumn && !hasNewColumn) {
+    console.log('Migrating bets.price_cents → bets.price_sats...');
+    // SQLite 3.25+ supports RENAME COLUMN
+    db.exec(`ALTER TABLE bets RENAME COLUMN price_cents TO price_sats`);
+    // Scale existing values: percentage → sats (multiply by 10)
+    db.exec(`UPDATE bets SET price_sats = price_sats * 10`);
+    console.log('Bets migration complete');
+  }
+} catch (e) {
+  console.log('Bets column migration skipped:', e.message);
 }
 
 // Create LNURL auth challenges table (for tracking login attempts)

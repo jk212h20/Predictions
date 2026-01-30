@@ -597,7 +597,7 @@ app.get('/api/user/positions/net', authMiddleware, (req, res) => {
     // Get YES positions for this market
     const yesBets = db.prepare(`
       SELECT SUM(amount_sats) as total_sats,
-             SUM(amount_sats * price_cents / 100) as total_cost
+             SUM(amount_sats * price_sats / 1000) as total_cost
       FROM bets 
       WHERE market_id = ? AND yes_user_id = ? AND status = 'active'
     `).get(market.id, req.user.id);
@@ -605,7 +605,7 @@ app.get('/api/user/positions/net', authMiddleware, (req, res) => {
     // Get NO positions for this market
     const noBets = db.prepare(`
       SELECT SUM(amount_sats) as total_sats,
-             SUM(amount_sats * (100 - price_cents) / 100) as total_cost
+             SUM(amount_sats * (1000 - price_sats) / 1000) as total_cost
       FROM bets 
       WHERE market_id = ? AND no_user_id = ? AND status = 'active'
     `).get(market.id, req.user.id);
@@ -1032,12 +1032,12 @@ app.get('/api/grandmasters', (req, res) => {
   // Calculate implied odds for each GM based on order book
   const gmsWithOdds = gms.map(gm => {
     const bestYes = db.prepare(`
-      SELECT MIN(price_cents) as price FROM orders 
+      SELECT MIN(price_sats) as price FROM orders 
       WHERE market_id = ? AND side = 'no' AND status IN ('open', 'partial')
     `).get(gm.attendance_market_id);
     
     const bestNo = db.prepare(`
-      SELECT MAX(price_cents) as price FROM orders 
+      SELECT MAX(price_sats) as price FROM orders 
       WHERE market_id = ? AND side = 'yes' AND status IN ('open', 'partial')
     `).get(gm.attendance_market_id);
     
@@ -1072,24 +1072,24 @@ app.get('/api/markets/:id', (req, res) => {
   
   // Get order book (aggregated by price)
   const yesOrders = db.prepare(`
-    SELECT price_cents, SUM(amount_sats - filled_sats) as total_sats, COUNT(*) as order_count
+    SELECT price_sats, SUM(amount_sats - filled_sats) as total_sats, COUNT(*) as order_count
     FROM orders
     WHERE market_id = ? AND side = 'yes' AND status IN ('open', 'partial')
-    GROUP BY price_cents
-    ORDER BY price_cents DESC
+    GROUP BY price_sats
+    ORDER BY price_sats DESC
   `).all(req.params.id);
   
   const noOrders = db.prepare(`
-    SELECT price_cents, SUM(amount_sats - filled_sats) as total_sats, COUNT(*) as order_count
+    SELECT price_sats, SUM(amount_sats - filled_sats) as total_sats, COUNT(*) as order_count
     FROM orders
     WHERE market_id = ? AND side = 'no' AND status IN ('open', 'partial')
-    GROUP BY price_cents
-    ORDER BY price_cents ASC
+    GROUP BY price_sats
+    ORDER BY price_sats ASC
   `).all(req.params.id);
   
   // Get recent trades
   const recentBets = db.prepare(`
-    SELECT price_cents, amount_sats, created_at
+    SELECT price_sats, amount_sats, created_at
     FROM bets
     WHERE market_id = ?
     ORDER BY created_at DESC
@@ -1110,7 +1110,7 @@ app.get('/api/markets/:id', (req, res) => {
  * 
  * SHARE MODEL:
  * - 1 share = 1000 sats payout if the prediction is correct
- * - price_cents represents probability (1-99 = 1%-99%)
+ * - price_sats represents probability (1-99 = 1%-99%)
  * - YES share at 60% costs 600 sats, pays 1000 sats if YES wins
  * - NO share at 40% costs 400 sats, pays 1000 sats if NO wins
  * - Complementary orders (YES@60 + NO@40 = 100%) match perfectly
@@ -1133,14 +1133,14 @@ app.get('/api/markets/:id', (req, res) => {
  * - Prevents double-fills and race conditions with bot pullback
  */
 app.post('/api/orders', authMiddleware, (req, res) => {
-  const { market_id, side, price_cents, amount_sats } = req.body;
+  const { market_id, side, price_sats, amount_sats } = req.body;
   
   // Validation (outside transaction - read-only checks)
   if (!['yes', 'no'].includes(side)) {
     return res.status(400).json({ error: 'Side must be yes or no' });
   }
-  if (price_cents < 1 || price_cents > 99) {
-    return res.status(400).json({ error: 'Probability must be between 1% and 99%' });
+  if (price_sats < 1 || price_sats > 999) {
+    return res.status(400).json({ error: 'Probability must be between 1 and 999 sats' });
   }
   if (amount_sats < 100) {
     return res.status(400).json({ error: 'Minimum order is 100 sats' });
@@ -1154,8 +1154,8 @@ app.post('/api/orders', authMiddleware, (req, res) => {
   
   // Calculate cost
   const cost = side === 'yes' 
-    ? Math.ceil(amount_sats * price_cents / 100)
-    : Math.ceil(amount_sats * (100 - price_cents) / 100);
+    ? Math.ceil(amount_sats * price_sats / 1000)
+    : Math.ceil(amount_sats * (1000 - price_sats) / 1000);
   
   // Pre-check balance (will verify again inside transaction)
   const userCheck = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
@@ -1193,15 +1193,41 @@ app.post('/api/orders', authMiddleware, (req, res) => {
     const matchedBets = [];
     
     const oppositeSide = side === 'yes' ? 'no' : 'yes';
-    const minComplementPrice = 100 - price_cents;
+    
+    /*
+     * MATCHING LOGIC:
+     * - YES @ X% pays X% per share, needs NO buyer to pay (100-X)% or more
+     * - NO @ Y% pays (100-Y)% per share, needs YES buyer to pay Y% or more
+     * 
+     * For YES @ X to match NO @ Y: X + (100-Y) >= 100, i.e., X >= Y
+     * For NO @ Y to match YES @ X: (100-Y) + X >= 100, i.e., X >= Y
+     * 
+     * So:
+     * - YES orders look for NO orders where NO.price_sats <= YES.price_sats
+     * - NO orders look for YES orders where YES.price_sats >= NO.price_sats
+     */
     
     // Get potentially matching orders (will re-verify each one)
-    const potentialMatches = db.prepare(`
-      SELECT * FROM orders
-      WHERE market_id = ? AND side = ? AND status IN ('open', 'partial')
-      AND price_cents >= ?
-      ORDER BY price_cents DESC, created_at ASC
-    `).all(market_id, oppositeSide, minComplementPrice);
+    let potentialMatches;
+    if (side === 'yes') {
+      // YES buyer: find NO orders with price_sats <= our price
+      // Best matches are LOWEST price_sats first (they paid more, better deal for us)
+      potentialMatches = db.prepare(`
+        SELECT * FROM orders
+        WHERE market_id = ? AND side = 'no' AND status IN ('open', 'partial')
+        AND price_sats <= ?
+        ORDER BY price_sats ASC, created_at ASC
+      `).all(market_id, price_sats);
+    } else {
+      // NO buyer: find YES orders with price_sats >= our price
+      // Best matches are HIGHEST price_sats first (they paid more, better deal for us)
+      potentialMatches = db.prepare(`
+        SELECT * FROM orders
+        WHERE market_id = ? AND side = 'yes' AND status IN ('open', 'partial')
+        AND price_sats >= ?
+        ORDER BY price_sats DESC, created_at ASC
+      `).all(market_id, price_sats);
+    }
     
     let matchedBotOrders = false;
     
@@ -1220,7 +1246,7 @@ app.post('/api/orders', authMiddleware, (req, res) => {
       if (matchAvailable <= 0) continue;
       
       const matchAmount = Math.min(remainingAmount, matchAvailable);
-      const tradePrice = matchOrder.price_cents;
+      const tradePrice = matchOrder.price_sats;
       
       // Check if this is a bot order
       const isBotMatch = bot.isBotUser(matchOrder.user_id);
@@ -1236,7 +1262,7 @@ app.post('/api/orders', authMiddleware, (req, res) => {
       const noOrderId = side === 'no' ? orderId : matchOrder.id;
       
       db.prepare(`
-        INSERT INTO bets (id, market_id, yes_user_id, no_user_id, yes_order_id, no_order_id, price_cents, amount_sats)
+        INSERT INTO bets (id, market_id, yes_user_id, no_user_id, yes_order_id, no_order_id, price_sats, amount_sats)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(betId, market_id, yesUserId, noUserId, yesOrderId, noOrderId, 100 - tradePrice, matchAmount);
       
@@ -1262,9 +1288,9 @@ app.post('/api/orders', authMiddleware, (req, res) => {
                         remainingAmount < amount_sats ? 'partial' : 'open';
     
     db.prepare(`
-      INSERT INTO orders (id, user_id, market_id, side, price_cents, amount_sats, filled_sats, status)
+      INSERT INTO orders (id, user_id, market_id, side, price_sats, amount_sats, filled_sats, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(orderId, req.user.id, market_id, side, price_cents, amount_sats, amount_sats - remainingAmount, orderStatus);
+    `).run(orderId, req.user.id, market_id, side, price_sats, amount_sats, amount_sats - remainingAmount, orderStatus);
     
     // Record transaction
     db.prepare(`
@@ -1403,8 +1429,8 @@ app.delete('/api/orders/:id', authMiddleware, (req, res) => {
   // Refund remaining amount
   const remaining = order.amount_sats - order.filled_sats;
   const refund = order.side === 'yes'
-    ? Math.ceil(remaining * order.price_cents / 100)
-    : Math.ceil(remaining * (100 - order.price_cents) / 100);
+    ? Math.ceil(remaining * order.price_sats / 1000)
+    : Math.ceil(remaining * (100 - order.price_sats) / 1000);
   
   const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
   const newBalance = user.balance_sats + refund;
@@ -1487,8 +1513,8 @@ app.post('/api/admin/resolve', authMiddleware, adminMiddleware, (req, res) => {
   for (const order of openOrders) {
     const remaining = order.amount_sats - order.filled_sats;
     const refund = order.side === 'yes'
-      ? Math.ceil(remaining * order.price_cents / 100)
-      : Math.ceil(remaining * (100 - order.price_cents) / 100);
+      ? Math.ceil(remaining * order.price_sats / 1000)
+      : Math.ceil(remaining * (100 - order.price_sats) / 1000);
     
     db.prepare('UPDATE users SET balance_sats = balance_sats + ? WHERE id = ?').run(refund, order.user_id);
     db.prepare('UPDATE orders SET status = ? WHERE id = ?').run('cancelled', order.id);

@@ -73,11 +73,11 @@ async function getMarkets() {
   return result.data;
 }
 
-async function placeOrder(token, marketId, side, priceCents, amountSats) {
+async function placeOrder(token, marketId, side, priceSats, amountSats) {
   const result = await makeRequest('POST', '/api/orders', {
     market_id: marketId,
     side,
-    price_cents: priceCents,
+    price_sats: priceSats,
     amount_sats: amountSats
   }, token);
   return result;

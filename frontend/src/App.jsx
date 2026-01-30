@@ -1135,8 +1135,8 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
 
   const totalPayout = shares * SATS_PER_SHARE;
   const cost = side === 'yes' 
-    ? Math.ceil(totalPayout * price / 100)
-    : Math.ceil(totalPayout * (100 - price) / 100);
+    ? Math.ceil(totalPayout * price / 1000)
+    : Math.ceil(totalPayout * (1000 - price) / 1000);
 
   const handleTrade = async () => {
     if (!user) {
@@ -1225,7 +1225,7 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
             <h4>YES Orders</h4>
             {market.orderBook.yes.slice(0, 5).map((o, i) => (
               <div key={i} className="ob-row">
-                <span>{o.price_cents}%</span>
+                <span>{o.price_sats}%</span>
                 <span>{formatSats(o.total_sats)} sats</span>
               </div>
             ))}
@@ -1235,7 +1235,7 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
             <h4>NO Orders</h4>
             {market.orderBook.no.slice(0, 5).map((o, i) => (
               <div key={i} className="ob-row">
-                <span>{o.price_cents}%</span>
+                <span>{o.price_sats}%</span>
                 <span>{formatSats(o.total_sats)} sats</span>
               </div>
             ))}
@@ -1498,20 +1498,20 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
   const [toast, setToast] = useState(null);
 
   // Handle clicking on an order book offer to fill in the trade form
-  const handleOfferClick = (offerSide, priceCents, availableShares) => {
+  const handleOfferClick = (offerSide, priceSats, availableShares) => {
     const newSide = offerSide === 'yes' ? 'no' : 'yes';
     // Take the opposite side of the offer
     setSide(newSide);
     // Use the same price (probability)
-    setPrice(priceCents);
+    setPrice(priceSats);
     // Set shares to match what's available
     setShares(availableShares);
     
     // Show toast notification
-    const costPerShare = newSide === 'yes' ? priceCents : (100 - priceCents);
-    const totalCost = Math.ceil(availableShares * SATS_PER_SHARE * costPerShare / 100);
+    const costPerShare = newSide === 'yes' ? priceSats : (1000 - priceSats);
+    const totalCost = Math.ceil(availableShares * SATS_PER_SHARE * costPerShare / 1000);
     setToast({
-      message: `✓ Form filled: ${availableShares} ${newSide.toUpperCase()} @ ${priceCents}%`,
+      message: `✓ Form filled: ${availableShares} ${newSide.toUpperCase()} @ ${priceSats}%`,
       subtext: `Cost: ${formatSats(totalCost)} sats — Click "Buy" to confirm!`
     });
     
@@ -1523,8 +1523,8 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
 
   const totalPayout = shares * SATS_PER_SHARE;
   const cost = side === 'yes' 
-    ? Math.ceil(totalPayout * price / 100)
-    : Math.ceil(totalPayout * (100 - price) / 100);
+    ? Math.ceil(totalPayout * price / 1000)
+    : Math.ceil(totalPayout * (1000 - price) / 1000);
   const profit = totalPayout - cost;
   const profitPercent = cost > 0 ? Math.round((profit / cost) * 100) : 0;
 
@@ -1612,7 +1612,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               <div className="summary-row">
                 <span>You pay:</span>
                 <span className="summary-value cost">
-                  {side === 'yes' ? price : (100 - price)} sats/share × {shares} = <strong>{formatSats(cost)} sats</strong>
+                  {side === 'yes' ? price : (1000 - price)} sats/share × {shares} = <strong>{formatSats(cost)} sats</strong>
                 </span>
               </div>
               <div className="summary-row">
@@ -1663,14 +1663,14 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               </div>
               {market.orderBook?.yes.map((o, i) => {
                 const shares = satsToShares(o.total_sats);
-                const priceSats = o.price_cents * 10; // 40% = 400 sats/share
+                const priceSats = o.price_sats * 10; // 40% = 400 sats/share
                 const totalCost = shares * priceSats;
                 return (
                   <div 
                     key={i} 
                     className="ob-row ob-row-clickable"
-                    onClick={() => handleOfferClick('yes', o.price_cents, shares)}
-                    title={`Click to buy ${shares} NO shares at ${100 - o.price_cents}%`}
+                    onClick={() => handleOfferClick('yes', o.price_sats, shares)}
+                    title={`Click to buy ${shares} NO shares at ${100 - o.price_sats}%`}
                   >
                     <span className="ob-price">{formatSats(priceSats)}</span>
                     <span className="ob-shares">{shares}</span>
@@ -1697,14 +1697,14 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               </div>
               {market.orderBook?.no.map((o, i) => {
                 const shares = satsToShares(o.total_sats);
-                const priceSats = (100 - o.price_cents) * 10; // NO price = 100 - YES price
+                const priceSats = (1000 - o.price_sats) * 10; // NO price = 100 - YES price
                 const totalCost = shares * priceSats;
                 return (
                   <div 
                     key={i} 
                     className="ob-row ob-row-clickable"
-                    onClick={() => handleOfferClick('no', o.price_cents, shares)}
-                    title={`Click to buy ${shares} YES shares at ${o.price_cents}%`}
+                    onClick={() => handleOfferClick('no', o.price_sats, shares)}
+                    title={`Click to buy ${shares} YES shares at ${o.price_sats}%`}
                   >
                     <span className="ob-price">{formatSats(priceSats)}</span>
                     <span className="ob-shares">{shares}</span>
@@ -1730,7 +1730,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
             <h3>Recent Trades</h3>
             {market.recentTrades.map((t, i) => (
               <div key={i} className="trade-row">
-                <span className="trade-price">{t.price_cents}%</span>
+                <span className="trade-price">{t.price_sats}%</span>
                 <span className="trade-shares">{satsToShares(t.amount_sats)} share{satsToShares(t.amount_sats) !== 1 ? 's' : ''}</span>
                 <span className="trade-time">{new Date(t.created_at).toLocaleString()}</span>
               </div>
@@ -1817,8 +1817,8 @@ function PortfolioModal({ user, onClose, onRefresh, onSelectMarket }) {
   const totalOrdersLocked = orders.reduce((sum, o) => {
     const remaining = o.amount_sats - o.filled_sats;
     return sum + (o.side === 'yes' 
-      ? Math.ceil(remaining * o.price_cents / 100)
-      : Math.ceil(remaining * (100 - o.price_cents) / 100));
+      ? Math.ceil(remaining * o.price_sats / 1000)
+      : Math.ceil(remaining * (1000 - o.price_sats) / 1000));
   }, 0);
 
   return (
@@ -2000,7 +2000,7 @@ function PortfolioModal({ user, onClose, onRefresh, onSelectMarket }) {
                               {o.side.toUpperCase()}
                             </span>
                           </td>
-                          <td>{o.price_cents}%</td>
+                          <td>{o.price_sats}%</td>
                           <td>{formatSats(o.amount_sats)} sats</td>
                           <td>
                             {formatSats(o.filled_sats)} / {formatSats(o.amount_sats)}
@@ -2070,7 +2070,7 @@ function PortfolioModal({ user, onClose, onRefresh, onSelectMarket }) {
                               {t.user_side.toUpperCase()}
                             </span>
                           </td>
-                          <td>{t.price_cents}%</td>
+                          <td>{t.price_sats}%</td>
                           <td>{formatSats(t.amount_sats)} sats</td>
                           <td>
                             <span className={`result-badge result-${t.result}`}>

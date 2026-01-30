@@ -58,17 +58,48 @@ Admin account: `admin@chess960.btc`
 - **Auth**: JWT (Google OAuth + LNURL-auth planned)
 - **Payments**: Lightning Network (Voltage - mock for testing)
 
-## Market Mechanics
+## Trading System
+
+### Share Model
+- **1 share = 1,000 sats payout** to winner
+- Prices are in **sats per share** (1-999)
+- Winner receives 1,000 sats per share; loser receives nothing
+
+### Price Examples
+| Price (sats) | Side | You Pay | You Win If Correct |
+|-------------|------|---------|-------------------|
+| 300 sats | YES | 300 sats | 1,000 sats |
+| 700 sats | NO | 700 sats | 1,000 sats |
+| 600 sats | YES | 600 sats | 1,000 sats |
+| 400 sats | NO | 400 sats | 1,000 sats |
+
+### Order Matching
+Orders match when YES price + NO price >= 1,000 sats:
+
+```
+Matching Rule:
+  YES @ 600 + NO @ 400 = 1,000 ✓ MATCHES!
+  YES @ 700 + NO @ 400 = 1,100 ✓ MATCHES! (surplus)
+  YES @ 500 + NO @ 400 = 900 ✗ No match (gap)
+
+Example:
+  Alice places YES @ 600 sats/share (5 shares)
+  Bob has NO @ 400 sats/share (5 shares)
+  
+  600 + 400 = 1,000 ✓ MATCH!
+  Alice pays: 5 × 600 = 3,000 sats
+  Bob pays: 5 × 400 = 2,000 sats
+  Total locked: 5,000 sats (winner takes all)
+```
+
+### Implied Probability (Display Only)
+For display purposes: `implied_percent = price_sats / 10`
+- 600 sats → 60% implied probability
+- 350 sats → 35% implied probability
 
 ### Order Types
 - **YES** - Betting the outcome will happen
 - **NO** - Betting the outcome won't happen
-
-### Pricing
-- Prices are in cents (1-99)
-- At 50¢, you risk 50 sats to win 50 sats
-- At 10¢ YES, you risk 10 sats to win 90 sats
-- Prices represent implied probability
 
 ### Resolution
 1. Admin initiates resolution (YES or NO)

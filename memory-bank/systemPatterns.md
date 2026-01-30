@@ -1,51 +1,78 @@
 # System Patterns - Market Maker Bot
 
-## Integer-Based Trading System (NEW)
+## ⚡ CANONICAL PRICING MODEL
 
-### Overview
-The order matching system has been redesigned to use **pure integer arithmetic** with no rounding. This eliminates the small "house edge" caused by `Math.ceil()` rounding and ensures **perfect money conservation**.
+**There is ONE system. Everything uses sats. No "cents" anywhere.**
 
-### Core Principles
+### Core Rules
 ```
-1 share = 1000 sats payout to winner
-Price = sats per share (1-999)
-Matching: YES price + NO price ≥ 1000
+1 share = 1,000 sats payout to winner
+price_sats = what you pay per share (1-999 sats)
+Matching: YES_price + NO_price >= 1000
 ```
 
-### Key Rules
-1. **Prices are integers** (1-999 sats per share)
-2. **Shares are integers** (1, 2, 3, ... shares)
-3. **Percentages are display-only** (derived: price/1000 × 100)
-4. **No rounding ever** - all arithmetic is integer multiplication
-5. **Sitting order filled at exact price** - taker gets price improvement
+### Database Storage
+| Column | Type | Range | Description |
+|--------|------|-------|-------------|
+| `price_sats` | INTEGER | 1-999 | Sats per share this side pays |
+| `shares` | INTEGER | 1+ | Number of shares |
+| `amount_sats` | INTEGER | 1000+ | Total sats = shares × 1000 |
 
-### Matching Example
+### Order Matching
 ```
-Bob posts: NO @ 400 sats/share (5 shares) → pays 2000 sats
-Alice takes: YES @ 700 sats/share (5 shares) → offers up to 3500 sats
+YES @ 600 sats/share + NO @ 400 sats/share = 1000 ✓ MATCHES!
+YES @ 700 sats/share + NO @ 400 sats/share = 1100 ✓ MATCHES! (surplus)
+YES @ 500 sats/share + NO @ 400 sats/share = 900 ✗ No match (gap)
 
-Match condition: 700 + 400 = 1100 ≥ 1000 ✓
+Rule for YES taker:
+  Find NO orders where NO_price_sats >= (1000 - YES_price_sats)
+  
+Rule for NO taker:
+  Find YES orders where YES_price_sats >= (1000 - NO_price_sats)
+```
+
+### Example Trade
+```
+Bob posts: NO @ 400 sats/share (5 shares) → pays 2,000 sats
+Alice takes: YES @ 700 sats/share (5 shares) → offers up to 3,500 sats
+
+Match: 700 + 400 = 1,100 >= 1,000 ✓
 
 Execution:
   - Bob filled at HIS price: 400 sats/share
-  - Alice pays complement: 1000 - 400 = 600 sats/share
-  - Alice actual cost: 5 × 600 = 3000 sats
-  - Alice refund: 3500 - 3000 = 500 sats (price improvement!)
-  - Total locked: 2000 + 3000 = 5000 sats
-  - Winner gets: 5000 sats (exactly 5 × 1000)
+  - Alice pays complement: 1,000 - 400 = 600 sats/share
+  - Alice actual cost: 5 × 600 = 3,000 sats
+  - Alice refund: 3,500 - 3,000 = 500 sats (price improvement!)
+  - Total locked: 2,000 + 3,000 = 5,000 sats
+  - Winner gets: 5,000 sats (exactly 5 × 1,000)
 ```
 
-### Money Conservation Guarantee
+### Implied Percentage (Display Only)
+```javascript
+// Only for display - never stored!
+impliedPercent = price_sats / 10;
+
+// Examples:
+// 600 sats → 60%
+// 350 sats → 35%
+// 999 sats → 99.9%
+```
+
+### Money Conservation
 ```javascript
 // Perfect conservation at all times
 balance_total + locked_in_bets + locked_in_orders === initial_total
 
-// No rounding loss - all operations are:
-cost = shares × price_sats  // Integer × Integer = Integer
-payout = shares × 1000      // Integer × 1000 = Integer
+// All operations are integer arithmetic - no rounding!
+cost = shares × price_sats
+payout = shares × 1000
 ```
 
-### Database Schema (Orders)
+---
+
+## Database Schema
+
+### Orders Table
 ```sql
 CREATE TABLE orders (
   id TEXT PRIMARY KEY,
@@ -53,465 +80,119 @@ CREATE TABLE orders (
   market_id TEXT NOT NULL,
   side TEXT NOT NULL CHECK(side IN ('yes', 'no')),
   price_sats INTEGER NOT NULL CHECK(price_sats >= 1 AND price_sats <= 999),
-  shares INTEGER NOT NULL CHECK(shares >= 1),
-  filled_shares INTEGER DEFAULT 0,
-  status TEXT DEFAULT 'open',
+  amount_sats INTEGER NOT NULL CHECK(amount_sats >= 1000),
+  filled_sats INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'open' CHECK(status IN ('open', 'partial', 'filled', 'cancelled')),
   created_at TEXT DEFAULT (datetime('now'))
 );
 ```
 
-### Database Schema (Bets)
+### Bets Table
 ```sql
 CREATE TABLE bets (
   id TEXT PRIMARY KEY,
   market_id TEXT NOT NULL,
   yes_user_id TEXT NOT NULL,
   no_user_id TEXT NOT NULL,
+  yes_order_id TEXT,
+  no_order_id TEXT,
   trade_price_sats INTEGER NOT NULL,  -- What YES side paid per share
-  shares INTEGER NOT NULL,
+  amount_sats INTEGER NOT NULL,       -- Total sats in bet (shares × 1000)
   status TEXT DEFAULT 'active',
   settled_at TEXT
 );
 ```
 
-### API Format
-```javascript
-// Place Order
-POST /api/markets/:id/order
-{ "side": "yes", "price_sats": 600, "shares": 10 }
+---
 
-// Response
-{
-  "order_id": "...",
-  "filled_shares": 10,
-  "remaining_shares": 0,
-  "cost": 5800,           // Actual sats spent (may be less than max)
-  "max_cost": 6000,       // What user was willing to pay
-  "refund": 200,          // Price improvement
-  "implied_pct": "60.0"   // For display only
+## REFACTOR TODO (Current Task)
+
+### Files to Update
+1. **database.js** - Rename `price_cents` → `price_sats`, constraint 1-99 → 1-999
+2. **server.js** - Rename all `price_cents` → `price_sats`, fix matching/cost formulas
+3. **bot.js** - Rename all `price_cents` → `price_sats`, update curves 5-50 → 50-500
+4. **App.jsx** - Rename all `price_cents` → `price_sats`, remove ×10 conversions
+5. **All test files** - Already use sats (testHelpers.js is canonical)
+
+### Matching Logic Fix
+```javascript
+// OLD (WRONG - used complement math with percentages):
+if (side === 'yes') {
+  potentialMatches = orders WHERE NO.price_cents <= YES.price_cents
+}
+
+// NEW (CORRECT - use sats complement to 1000):
+if (side === 'yes') {
+  const minNoPrice = 1000 - price_sats;
+  potentialMatches = orders WHERE NO.price_sats >= minNoPrice
 }
 ```
 
-### Implied Percentage (Display Only)
+### Cost Calculation Fix
 ```javascript
-function impliedPercent(priceSats) {
-  return (priceSats / 1000 * 100).toFixed(1) + '%';
-}
+// OLD (WRONG - divided by 100 assuming percentage):
+cost = Math.ceil(amount_sats * price_cents / 100);
 
-// Examples:
-// 600 sats → "60.0%"
-// 333 sats → "33.3%"
-// 999 sats → "99.9%"
+// NEW (CORRECT - direct multiplication):
+cost = shares * price_sats;
+// Or if using amount_sats (which is shares × 1000):
+cost = (amount_sats / 1000) * price_sats;
 ```
-
-### Auto-Settle
-When a user holds both YES and NO positions in the same market, they cancel out:
-```
-Alice has: 5 YES shares + 5 NO shares
-Auto-settle: Returns 5 × 1000 = 5000 sats to Alice
-Result: 0 YES, 0 NO positions
-```
-
-### Test Coverage
-27 tests validate the integer system:
-- Basic matching
-- Money conservation (EXACT, no rounding)
-- Price improvement
-- Validation
-- Auto-settle
-- Implied percentage
-- Stress tests (100+ trades)
-- Edge cases
 
 ---
 
-## Overview
+## Bot Market Maker
 
-The bot is a market maker that provides liquidity to attendance prediction markets. It offers NO shares across all player markets, allowing users to bet YES on players attending.
-
-## Core Formula
-
+### Core Formula
 ```
 deployable_budget = min(user_balance, max_acceptable_loss) × global_multiplier × pullback_ratio
 ```
 
-Where:
-- `user_balance` = admin's current sats balance
-- `max_acceptable_loss` = configured maximum loss (can never exceed balance)
-- `global_multiplier` = liquidity amplification (e.g., 10× shows more liquidity than actually at risk)
-- `pullback_ratio` = automatic reduction based on current exposure
-
-## Data Flow: Settings → Orders
-
-```
-┌─────────────────┐
-│   Bot Config    │  max_acceptable_loss, global_multiplier
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Market Weights  │  % of budget per player (must sum to 100%)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Curve Shape    │  Distribution across price points (normalized to 100%)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│    Orders       │  Actual NO orders placed in each market
-└─────────────────┘
-```
-
-## Multiplier: Show More Than You Risk
-
-**The Problem:** You want deep order books but don't want to risk your whole balance.
-
-**The Solution:** Multiplier + Pullback
-
-```
-Example: 1M budget, 10× multiplier
-- At 0% exposure: Show 10M liquidity
-- At 50% exposure (500K booked): Show 5M liquidity  
-- At 100% exposure (1M booked): Show 0 liquidity
-
-The pullback GUARANTEES max loss = 1M regardless of multiplier.
-```
-
-**How it works:**
-1. You set max_loss = 1M
-2. Multiplier = 10× makes offers appear 10× larger
-3. As orders get filled, exposure increases
-4. Pullback ratio decreases proportionally
-5. When exposure = max_loss, pullback = 0 (no more offers)
-
-## Pullback Formula
-
+### Pullback Formula
 ```javascript
 pullback_ratio = (max_loss - current_exposure) / max_loss
+
+// Example: 1M budget, 10× multiplier
+// At 0% exposure:   Show 10M liquidity
+// At 50% exposure:  Show 5M liquidity  
+// At 100% exposure: Show 0 liquidity
 ```
 
-| Exposure | Pullback Ratio | Liquidity Shown (10× mult) |
-|----------|---------------|---------------------------|
-| 0        | 100%          | 10,000,000 sats           |
-| 100,000  | 90%           | 9,000,000 sats            |
-| 500,000  | 50%           | 5,000,000 sats            |
-| 900,000  | 10%           | 1,000,000 sats            |
-| 1,000,000| 0%            | 0 sats (stops offering)   |
-
-**Threshold-based triggers:** Pullback recalculates every 1% of max_loss (not continuously). This means ~100 adjustment events from 0 to max exposure.
-
-## Tier & Weight System
-
-### The Problem
-You have 170 players but want to allocate more budget to likely attendees.
-
-### The Solution: Tiers + Weights
-
-**Tiers** group players by likelihood score:
-- S tier (70+): Most likely to attend
-- A+ tier (60-69): Very likely
-- A tier (50-59): Likely
-- B+ tier (40-49): Above average
-- B tier (25-39): Average
-- C tier (0-24): Below average
-- D tier (<0): Unlikely
-
-**Weights** determine budget allocation:
-- Each tier gets a % of total budget
-- Within a tier, each player gets proportional share
-- All weights sum to 100%
-
-### Why Weights Might Be Empty
-
-The `bot_market_weights` table doesn't auto-populate. Admin must:
-1. Go to **Tiers** tab
-2. Click **"Initialize from Scores"**
-
-Without this step, `getEffectiveCurve()` returns `null` for every market → 0 orders deployed.
-
-## Curve Shapes
-
-Shapes define HOW budget is distributed across price points (5% to 50% YES probability).
-
-**Shape types:**
-- **Bell**: Gaussian curve, concentrate around a center point
-- **Flat**: Equal at all prices
-- **Exponential**: Heavy at low prices, fading higher
-- **Custom**: Draw your own
-
-**Key concept:** Shapes are NORMALIZED (weights sum to 1.0). The actual sats come from:
-```
-order_amount = deployable_budget × market_weight × shape_weight_at_price
-```
-
-### Active Curve
-
-One shape is marked `is_default = 1` in `bot_curve_shapes`. This is the "active" curve used for all deployments.
-
-## Database Schema
-
-### bot_config
-```sql
-id, bot_user_id, max_acceptable_loss, total_liquidity, threshold_percent, global_multiplier, is_active
-```
-- `bot_user_id`: The admin who deployed orders (their balance is used)
-- `max_acceptable_loss`: Cannot exceed bot_user's balance
-- `global_multiplier`: Liquidity amplification factor
-- `threshold_percent`: Pullback trigger (default 1%)
-- `is_active`: Master on/off switch
-
-### bot_exposure
-```sql
-id, total_at_risk, current_tier, last_pullback_at
-```
-- `total_at_risk`: Current exposure (sum of all active bets where bot is NO side)
-- `current_tier`: Number of 1% thresholds crossed (0-100)
-
-### bot_curve_shapes
-```sql
-id, name, shape_type, params, normalized_points, is_default
-```
-- `normalized_points`: JSON array of {price, weight} summing to 1.0
-- `is_default`: Only one can be default (the active curve)
-
-### bot_market_weights
-```sql
-id, market_id, weight, relative_odds, is_locked
-```
-- `weight`: Fraction of budget (all weights sum to 1.0)
-- `is_locked`: If true, won't be auto-adjusted when other tiers change
-
-## Prerequisites for Deployment
-
-1. ✅ **Weights initialized**: Run "Initialize from Scores" in Tiers tab
-2. ✅ **Active curve set**: One curve must have is_default = 1
-3. ✅ **Bot active**: is_active = 1 in bot_config
-4. ✅ **Balance sufficient**: max_acceptable_loss ≤ user balance
-5. ✅ **Markets exist**: At least one open attendance market
-
-## Common Issues
-
-### "265 orders deployed but none were"
-- Weights not initialized → all `getEffectiveCurve()` return null
-- Fix: Initialize weights from Tiers tab
-
-### "Total Deployment Cost exceeds Effective Balance"
-- Config has high max_loss but user balance is low
-- Fix: max_loss is now capped at user balance automatically
-
-### "Pullback ratio is 0"
-- Exposure equals max_loss → all offers withdrawn
-- This is correct behavior (max loss reached)
-
-## Admin Workflow
-
-1. **Configure**: Set max_loss, multiplier in Configuration tab
-2. **Initialize Weights**: Go to Tiers → "Initialize from Scores"
-3. **Set Curve**: Go to Buy Curve → draw/select → Save as Custom → Set as Active
-4. **Preview**: Go to Deploy → verify numbers look right
-5. **Deploy**: Click Deploy All Orders
-6. **Monitor**: Check Overview tab for exposure levels
-
-## Withdrawal System
-
-### Overview
-The withdrawal system supports both **instant auto-approval** and **manual admin approval** for larger withdrawals.
-
-### Auto-Approval Rules
+### Curve Points (After Refactor)
+Curves define distribution across price points in SATS:
 ```javascript
-canAutoApprove = 
-  amount_sats <= 100,000 (100k limit) &&
-  amount_sats <= user's total completed deposits &&
-  channel has sufficient outbound liquidity
+// Price points for curves (50 to 500 sats = 5% to 50% probability)
+const PRICE_POINTS_SATS = [50, 100, 150, 200, 250, 300, 350, 400, 450, 500];
 ```
 
-If ALL conditions are met → withdrawal processes immediately via Lightning.
+---
 
-### Pending Withdrawal Flow
-If auto-approval fails:
-1. Funds are deducted from user balance (held)
-2. `pending_withdrawals` record created with status = 'pending'
-3. Transaction record created with status = 'pending'
-4. User sees pending withdrawal in their wallet modal (can cancel)
-5. Admin sees pending withdrawal in Bot Admin → Withdrawals tab
-6. Admin can approve (pays invoice) or reject (refunds user)
+## Two-Sided Liquidity
 
-### Database: pending_withdrawals
-```sql
-id, user_id, amount_sats, payment_request, status, rejection_reason, approved_by, created_at, processed_at
+### Crossover Point
 ```
-- `status`: 'pending', 'completed', 'rejected', 'failed'
-- `approved_by`: admin user_id who processed it
-- `payment_request`: the Lightning invoice to pay
+Below crossover: Bot sells YES shares
+Above crossover: Bot sells NO shares
+At crossover: Gap/spread (no liquidity)
 
-### Admin Endpoints
-- `GET /api/admin/withdrawals/pending` - list pending with user info
-- `POST /api/admin/withdrawals/:id/approve` - pay invoice via LND
-- `POST /api/admin/withdrawals/:id/reject` - refund to user balance
-- `GET /api/admin/channel-balance` - check outbound liquidity
-
-### User Endpoints
-- `POST /api/wallet/withdraw` - request withdrawal (auto or pending)
-- `POST /api/wallet/withdraw/cancel` - cancel pending (self-refund)
-- `GET /api/wallet/pending-withdrawals` - list own pending
-
-## On-Chain Bitcoin System
-
-### Overview
-In addition to Lightning Network, the platform supports on-chain Bitcoin deposits and withdrawals.
-
-### On-Chain Deposits
-
-**Flow:**
-1. User clicks "On-Chain" tab in wallet modal
-2. User clicks "Generate Address" → API creates new P2WPKH address via LND
-3. Address stored in `onchain_deposits` table
-4. QR code displayed for scanning
-5. User sends Bitcoin to address
-6. App polls `checkAddressesForDeposits()` to detect incoming funds
-7. Auto-credit rules:
-   - ≤100k sats: Credit immediately (0-conf)
-   - >100k sats: Wait for 1 confirmation
-
-**Database: onchain_deposits**
-```sql
-id, user_id, address, amount_sats, txid, confirmations, credited, created_at, detected_at, confirmed_at
+Example with crossover at 300 sats:
+  Bot's YES offers: 50-250 sats
+  Bot's NO offers: 350-500 sats
+  Spread gap: 300 sats (no self-trade possible)
 ```
-- `address`: Unique per deposit request
-- `credited`: 0 = waiting, 1 = balance updated
-
-### On-Chain Withdrawals
-
-**Flow:**
-1. User enters Bitcoin address and amount (min 10k sats)
-2. Validation: balance check, address format, no unconfirmed deposits
-3. **ATOMIC TRANSACTION**: Deduct balance, create withdrawal record, create transaction record
-4. Withdrawal goes to admin queue (no auto-approval)
-5. Admin reviews and approves (SendCoins via LND) or rejects (refund to user)
-
-**Why admin queue?** On-chain fees are significant, and there's no easy way to validate the address belongs to the user. Manual review prevents abuse.
-
-**Atomicity Fix (2026-01-29):**
-```javascript
-const createWithdrawal = db.transaction(() => {
-  db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, userId);
-  db.prepare('INSERT INTO onchain_withdrawals ...').run(...);
-  db.prepare('INSERT INTO transactions ...').run(...);
-  return { withdrawalId, newBalance };
-});
-```
-If any statement fails, all roll back. User's balance is never affected without a corresponding record.
-
-**Database: onchain_withdrawals**
-```sql
-id, user_id, amount_sats, dest_address, fee_sats, user_pays_fee, status, txid, rejection_reason, approved_by, created_at, processed_at
-```
-- `user_pays_fee`: 0 = free (first 10), 1 = user covers fee
-- `status`: 'pending', 'completed', 'rejected', 'failed'
-- `txid`: Set when admin approves and broadcast succeeds
-
-### Admin Endpoints (On-Chain)
-- `GET /api/admin/onchain/withdrawals/pending` - View all pending
-- `POST /api/admin/onchain/withdrawals/:id/approve` - Send via LND SendCoins
-- `POST /api/admin/onchain/withdrawals/:id/reject` - Refund to user balance
-- `GET /api/admin/onchain/balance` - Check on-chain wallet balance
-
-### User Endpoints (On-Chain)
-- `POST /api/wallet/onchain/deposit` - Generate new deposit address
-- `GET /api/wallet/onchain/deposit/status` - Check/credit pending deposits
-- `GET /api/wallet/onchain/deposits` - List deposit history
-- `POST /api/wallet/onchain/withdraw` - Request on-chain withdrawal
-- `POST /api/wallet/onchain/withdraw/cancel` - Cancel pending (self-refund)
-- `GET /api/wallet/onchain/pending-withdrawals` - List pending withdrawals
-
-### LND Integration (lightning.js)
-```javascript
-// Address generation
-generateOnchainAddress('p2wkh') → { address, is_real }
-
-// Check for deposits
-checkAddressesForDeposits(addresses) → [{ matched_address, amount_sats, confirmations, txid }]
-
-// Send on-chain
-sendOnchain(address, amount_sats) → { txid }
-
-// Balance check
-getOnchainBalance() → { confirmed_sats, unconfirmed_sats }
-```
-
-## Two-Sided Liquidity (In Progress)
-
-### Overview
-The bot is being upgraded from one-sided (NO only) to two-sided market making. Instead of only offering NO shares, the bot will offer BOTH YES and NO shares with a "crossover point" that separates the two sides.
-
-### Crossover Point Concept
-```
-         ┌─────────────────────────────────────────────┐
-   50%   │ ▓▓▓▓▓▓▓▓ NO (selling NO shares)             │
-   45%   │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓ NO                           │
-   40%   │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ NO                       │
-   35%   │ ▓▓▓▓▓▓▓▓▓▓▓▓ NO                             │
-         │                                             │
-  ━━━━━━━│━━━━━━━[CROSSOVER @ 30%]━━━━━━━━━━━━━━━━━━━━━│
-         │                                             │
-   25%   │ ████████████ YES (selling YES shares)       │
-   20%   │ ████████████████████ YES                    │
-   15%   │ ████████████████ YES                        │
-   10%   │ ████████ YES                                │
-    5%   │ ████ YES                                    │
-         └─────────────────────────────────────────────┘
-```
-
-- **Above crossover**: Bot sells NO shares (bets player won't attend)
-- **Below crossover**: Bot sells YES shares (bets player will attend)
-- **At crossover**: Gap/spread - no liquidity (prevents self-trade)
-
-### Why Self-Trade is Impossible
-With crossover at 30%:
-- Bot's YES offers only at prices ≤25%
-- Bot's NO offers only at prices ≥35%
-- For a match: YES@P needs NO@P+ → Bot's YES@25% needs NO@25%+ but bot only has NO@35%+
-
-The spread gap acts as a natural barrier - exactly like real market makers.
 
 ### YES/NO Annihilation
-When bot holds both YES and NO shares in the same market, they cancel out:
 ```
 Bot holds: 100 YES + 50 NO in Market X
 
 Annihilation:
-  50 YES + 50 NO = 50 × 1000 sats = 50,000 sats returned to budget
-  Remaining: 50 YES shares (net long position)
+  50 YES + 50 NO = 50 shares canceled = 50,000 sats returned
+  Remaining: 50 YES shares
 
 Net exposure = |YES shares - NO shares| × 1000 sats
 ```
 
-### Updated Exposure Formula
-```javascript
-// Old (NO-only)
-exposure = sum of all NO bet amounts
-
-// New (two-sided with annihilation)
-yes_exposure = sum of YES bet amounts per market
-no_exposure = sum of NO bet amounts per market
-net_exposure_per_market = |yes_exposure - no_exposure|
-total_net_exposure = sum of net_exposure_per_market
-
-// Annihilated value (returned to budget)
-annihilated = sum of min(yes_exposure, no_exposure) per market
-```
-
-### Database Changes
-- `bot_curve_shapes.crossover_point` - price where bot switches from YES to NO (default 25)
-
-### UI: Draggable Crossover Curve Editor
-- Single unified curve with all price points (5-50%)
-- Draggable horizontal slider to set crossover point
-- Color coding: Red/Orange above crossover (NO), Green/Blue below (YES)
-- Each bar is draggable to set weight at that price
-- Summary shows: budget split, effective spread, net exposure
+---
 
 ## Future Improvements (Backlog)
 
