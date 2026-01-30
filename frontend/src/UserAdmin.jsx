@@ -64,6 +64,52 @@ export default function UserAdmin({ currentUserId, onBalanceChange }) {
   const [restorePassword, setRestorePassword] = useState('');
   const [availableBackups, setAvailableBackups] = useState([]);
   const [selectedBackup, setSelectedBackup] = useState('');
+  
+  // Withdrawal settings state
+  const [withdrawalSettings, setWithdrawalSettings] = useState(null);
+  const [withdrawalPauseLoading, setWithdrawalPauseLoading] = useState(false);
+
+  // Load withdrawal settings
+  const loadWithdrawalSettings = useCallback(async () => {
+    try {
+      const response = await fetch('/api/admin/withdrawals/settings', {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const data = await response.json();
+      setWithdrawalSettings(data);
+    } catch (err) {
+      console.error('Failed to load withdrawal settings:', err);
+    }
+  }, []);
+
+  // Toggle auto-withdrawal pause
+  const toggleWithdrawalPause = async () => {
+    setWithdrawalPauseLoading(true);
+    try {
+      const newPauseState = !withdrawalSettings?.auto_withdraw_paused;
+      const response = await fetch('/api/admin/withdrawals/settings', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          auto_withdraw_paused: newPauseState,
+          pause_reason: newPauseState ? 'Paused via admin panel' : null
+        })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setWithdrawalSettings(data.settings);
+      } else {
+        setError(data.error || 'Failed to update withdrawal settings');
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setWithdrawalPauseLoading(false);
+    }
+  };
 
   // Load stats
   const loadStats = useCallback(async () => {
@@ -112,7 +158,8 @@ export default function UserAdmin({ currentUserId, onBalanceChange }) {
   useEffect(() => {
     loadStats();
     loadUsers();
-  }, [loadStats, loadUsers]);
+    loadWithdrawalSettings();
+  }, [loadStats, loadUsers, loadWithdrawalSettings]);
 
   useEffect(() => {
     if (selectedUser) {
@@ -290,6 +337,37 @@ export default function UserAdmin({ currentUserId, onBalanceChange }) {
         <div className="stat-card">
           <div className="stat-value">{stats.disabled_users}</div>
           <div className="stat-label">Disabled</div>
+        </div>
+        <div className="stat-card" style={{ 
+          backgroundColor: withdrawalSettings?.auto_withdraw_paused ? '#ff4444' : '#2d3748',
+          border: withdrawalSettings?.auto_withdraw_paused ? '2px solid #ff0000' : '1px solid #4a5568'
+        }}>
+          <div className="stat-label" style={{ marginBottom: '8px', fontWeight: 'bold' }}>
+            ⚡ Auto Withdrawals
+          </div>
+          <button
+            onClick={toggleWithdrawalPause}
+            disabled={withdrawalPauseLoading}
+            style={{
+              padding: '10px 20px',
+              fontSize: '1em',
+              fontWeight: 'bold',
+              backgroundColor: withdrawalSettings?.auto_withdraw_paused ? '#4caf50' : '#ff4444',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: withdrawalPauseLoading ? 'wait' : 'pointer',
+              width: '100%'
+            }}
+          >
+            {withdrawalPauseLoading ? '...' : 
+              withdrawalSettings?.auto_withdraw_paused ? '▶️ RESUME' : '⏸️ PAUSE ALL'}
+          </button>
+          <div style={{ fontSize: '0.75em', marginTop: '6px', opacity: 0.8 }}>
+            {withdrawalSettings?.auto_withdraw_paused 
+              ? '🔴 ALL withdrawals need approval' 
+              : '🟢 Auto-approving < 100k'}
+          </div>
         </div>
         <div className="stat-card danger-card">
           <button className="danger-btn" onClick={() => setShowResetDbModal(true)}>
