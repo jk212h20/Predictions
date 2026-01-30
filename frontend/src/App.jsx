@@ -2059,35 +2059,41 @@ function PortfolioModal({ user, onClose, onRefresh, onSelectMarket }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {trades.map(t => (
-                        <tr key={t.id} className={t.result !== 'pending' ? `trade-${t.result}` : ''}>
-                          <td className="date-cell">
-                            {new Date(t.created_at).toLocaleDateString()}
-                          </td>
-                          <td className="market-cell">
-                            <a 
-                              className="market-link" 
-                              onClick={() => onSelectMarket && onSelectMarket(t.market_id)}
-                            >
-                              {t.grandmaster_name ? `${t.grandmaster_name}: ` : ''}{t.market_title}
-                            </a>
-                          </td>
-                          <td>
-                            <span className={`side-badge side-${t.user_side}`}>
-                              {t.user_side.toUpperCase()}
-                            </span>
-                          </td>
-                          <td>{t.price_sats}%</td>
-                          <td>{formatSats(t.amount_sats)} sats</td>
-                          <td>
-                            <span className={`result-badge result-${t.result}`}>
-                              {t.result === 'won' && '✓ Won'}
-                              {t.result === 'lost' && '✗ Lost'}
-                              {t.result === 'pending' && '⏳ Pending'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      {trades.map(t => {
+                        // Calculate actual price in sats/share based on side
+                        const priceSatsPerShare = t.user_side === 'yes' 
+                          ? t.price_sats * 10 
+                          : (100 - t.price_sats) * 10;
+                        return (
+                          <tr key={t.id} className={t.result !== 'pending' ? `trade-${t.result}` : ''}>
+                            <td className="date-cell">
+                              {new Date(t.created_at).toLocaleDateString()}
+                            </td>
+                            <td className="market-cell">
+                              <a 
+                                className="market-link" 
+                                onClick={() => onSelectMarket && onSelectMarket(t.market_id)}
+                              >
+                                {t.grandmaster_name ? `${t.grandmaster_name}: ` : ''}{t.market_title}
+                              </a>
+                            </td>
+                            <td>
+                              <span className={`side-badge side-${t.user_side}`}>
+                                {t.user_side.toUpperCase()}
+                              </span>
+                            </td>
+                            <td>{formatSats(priceSatsPerShare)} sats</td>
+                            <td>{formatSats(t.amount_sats)} sats</td>
+                            <td>
+                              <span className={`result-badge result-${t.result}`}>
+                                {t.result === 'won' && '✓ Won'}
+                                {t.result === 'lost' && '✗ Lost'}
+                                {t.result === 'pending' && '⏳ Pending'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}
