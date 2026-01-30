@@ -1133,10 +1133,12 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
 
   if (!market) return null;
 
+  // Convert percentage (1-99) to sats/share (10-990)
+  const priceSats = price * 10;
   const totalPayout = shares * SATS_PER_SHARE;
   const cost = side === 'yes' 
-    ? Math.ceil(totalPayout * price / 1000)
-    : Math.ceil(totalPayout * (1000 - price) / 1000);
+    ? Math.ceil(totalPayout * priceSats / 1000)
+    : Math.ceil(totalPayout * (1000 - priceSats) / 1000);
 
   const handleTrade = async () => {
     if (!user) {
@@ -1521,10 +1523,13 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
 
   if (!market) return null;
 
+  // Convert percentage (1-99) to sats/share (10-990)
+  // 50% = 500 sats/share, since 1 share pays out 1000 sats
+  const priceSats = price * 10;
   const totalPayout = shares * SATS_PER_SHARE;
   const cost = side === 'yes' 
-    ? Math.ceil(totalPayout * price / 1000)
-    : Math.ceil(totalPayout * (1000 - price) / 1000);
+    ? Math.ceil(totalPayout * priceSats / 1000)
+    : Math.ceil(totalPayout * (1000 - priceSats) / 1000);
   const profit = totalPayout - cost;
   const profitPercent = cost > 0 ? Math.round((profit / cost) * 100) : 0;
 
@@ -1612,7 +1617,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               <div className="summary-row">
                 <span>You pay:</span>
                 <span className="summary-value cost">
-                  {side === 'yes' ? price : (1000 - price)} sats/share × {shares} = <strong>{formatSats(cost)} sats</strong>
+                  {side === 'yes' ? priceSats : (1000 - priceSats)} sats/share × {shares} = <strong>{formatSats(cost)} sats</strong>
                 </span>
               </div>
               <div className="summary-row">
