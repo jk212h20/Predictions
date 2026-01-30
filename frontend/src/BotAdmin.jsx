@@ -216,8 +216,8 @@ export default function BotAdmin({ onClose }) {
     if (!confirm('Deploy bot orders to ALL attendance markets?')) return;
     setDeploying(true);
     try {
-      const result = await api.deployAllOrders();
-      alert(`Deployed! ${result.deployed} markets, ${result.totalOrders} orders, ${formatSats(result.totalCost)} sats locked`);
+      const result = await api.deployAllOrdersTwoSided();
+      alert(`Deployed! ${result.deployed} markets, ${result.totalOrders} orders (YES+NO), ${formatSats(result.totalCost)} sats locked`);
       await loadAllData();
     } catch (err) {
       alert('Failed to deploy: ' + err.message);
@@ -264,7 +264,7 @@ export default function BotAdmin({ onClose }) {
   const loadDeploymentPreview = async () => {
     setLoadingPreview(true);
     try {
-      const preview = await api.getDeploymentPreview();
+      const preview = await api.getDeploymentPreviewTwoSided();
       setDeploymentPreview(preview);
     } catch (err) {
       console.error('Failed to load deployment preview:', err);
@@ -610,6 +610,62 @@ export default function BotAdmin({ onClose }) {
                 </div>
                 <div className="curve-main">
                   <div className="curve-canvas">
+                  {/* Crossover vertical line indicator */}
+                  {(() => {
+                    const sortedPoints = [...curvePoints].sort((a, b) => a.price - b.price);
+                    if (sortedPoints.length === 0) return null;
+                    
+                    // Find position of crossover line between bars
+                    const minPrice = Math.min(...sortedPoints.map(p => p.price));
+                    const maxPrice = Math.max(...sortedPoints.map(p => p.price));
+                    
+                    // Calculate position as percentage of chart width
+                    // The bars are evenly distributed, so we need to find where crossover falls
+                    let crossoverPosition = 0;
+                    
+                    if (sortedPoints.length === 1) {
+                      crossoverPosition = crossoverPoint <= sortedPoints[0].price ? 0 : 100;
+                    } else {
+                      // Find which bars the crossover falls between
+                      const barWidth = 100 / sortedPoints.length;
+                      
+                      for (let i = 0; i < sortedPoints.length; i++) {
+                        const point = sortedPoints[i];
+                        const nextPoint = sortedPoints[i + 1];
+                        
+                        if (crossoverPoint <= point.price) {
+                          // Crossover is at or before this bar
+                          crossoverPosition = i * barWidth;
+                          break;
+                        } else if (!nextPoint || crossoverPoint < nextPoint.price) {
+                          // Crossover is between this bar and the next (or after last)
+                          const barCenter = (i + 0.5) * barWidth;
+                          if (nextPoint) {
+                            // Interpolate position between bars
+                            const priceRange = nextPoint.price - point.price;
+                            const crossoverOffset = crossoverPoint - point.price;
+                            const interpolation = crossoverOffset / priceRange;
+                            crossoverPosition = barCenter + (interpolation * barWidth);
+                          } else {
+                            // After last bar
+                            crossoverPosition = (i + 1) * barWidth;
+                          }
+                          break;
+                        }
+                      }
+                    }
+                    
+                    return (
+                      <div 
+                        className="crossover-line"
+                        style={{ left: `${Math.min(Math.max(crossoverPosition, 0), 100)}%` }}
+                      >
+                        <div className="crossover-line-inner"></div>
+                        <div className="crossover-line-label">{crossoverPoint}%</div>
+                      </div>
+                    );
+                  })()}
+                  
                   {curvePoints.sort((a, b) => a.price - b.price).map(point => {
                     const weight = point.weight || 0;
                     const heightPercent = Math.min((weight / 0.5) * 100, 100);
@@ -714,23 +770,42 @@ export default function BotAdmin({ onClose }) {
                 </div>
               </div>
 
-              {/* CROSSOVER SLIDER - Below the chart */}
+              {/* CROSSOVER SLIDER - Below the chart with aligned tick marks */}
               <div className="crossover-slider-standalone">
                 <div className="crossover-slider-row">
                   <span className="crossover-label-yes">🟢 YES ← {crossoverPoint}%</span>
-                  <input 
-                    type="range"
-                    min="5"
-                    max="50"
-                    step="1"
-                    value={crossoverPoint}
-                    onChange={e => setCrossoverPoint(parseInt(e.target.value))}
-                    className="crossover-slider"
-                    style={{
-                      flex: 1,
-                      background: `linear-gradient(to right, #27ae60 0%, #27ae60 ${((crossoverPoint - 5) / 45) * 100}%, #e74c3c ${((crossoverPoint - 5) / 45) * 100}%, #e74c3c 100%)`
-                    }}
-                  />
+                  <div className="crossover-slider-track">
+                    {/* Tick marks at bar positions */}
+                    <div className="crossover-ticks">
+                      {curvePoints.sort((a, b) => a.price - b.price).map(point => {
+                        // Calculate tick position relative to slider range (5-50)
+                        const tickPosition = ((point.price - 5) / 45) * 100;
+                        if (tickPosition < 0 || tickPosition > 100) return null;
+                        return (
+                          <div 
+                            key={point.price}
+                            className={`crossover-tick ${point.price < crossoverPoint ? 'yes-tick' : 'no-tick'}`}
+                            style={{ left: `${tickPosition}%` }}
+                            title={`${point.price}%`}
+                          >
+                            <span className="tick-label">{point.price}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <input 
+                      type="range"
+                      min="5"
+                      max="50"
+                      step="1"
+                      value={crossoverPoint}
+                      onChange={e => setCrossoverPoint(parseInt(e.target.value))}
+                      className="crossover-slider"
+                      style={{
+                        background: `linear-gradient(to right, #27ae60 0%, #27ae60 ${((crossoverPoint - 5) / 45) * 100}%, #e74c3c ${((crossoverPoint - 5) / 45) * 100}%, #e74c3c 100%)`
+                      }}
+                    />
+                  </div>
                   <span className="crossover-label-no">{crossoverPoint}% → NO 🔴</span>
                 </div>
               </div>
@@ -782,7 +857,11 @@ export default function BotAdmin({ onClose }) {
                               }
                               if (Array.isArray(points) && points.length > 0) {
                                 setCurvePoints(points.map(p => ({ price: p.price, weight: p.weight })));
-                                console.log('Loaded points:', points);
+                                // Also load the crossover point
+                                if (curve.crossover_point !== undefined && curve.crossover_point !== null) {
+                                  setCrossoverPoint(curve.crossover_point);
+                                }
+                                console.log('Loaded points:', points, 'crossover:', curve.crossover_point);
                               } else {
                                 alert('This curve has no saved points');
                               }
@@ -907,9 +986,9 @@ export default function BotAdmin({ onClose }) {
                     
                     setSaving(true);
                     try {
-                      await api.saveShape(name, 'custom', {}, curvePoints);
+                      await api.saveShape(name, 'custom', {}, curvePoints, crossoverPoint);
                       await loadSavedCurves();
-                      alert(`Curve saved as "${name}"`);
+                      alert(`Curve saved as "${name}" with crossover at ${crossoverPoint}%`);
                     } catch (err) {
                       alert('Failed to save: ' + err.message);
                     }
@@ -1266,19 +1345,29 @@ export default function BotAdmin({ onClose }) {
                             <span className="gm-rating">({market.fide_rating})</span>
                             {market.disabled && <span className="status-badge disabled">Disabled</span>}
                           </div>
-                          {!market.disabled && market.orders.length > 0 && (
+                          {!market.disabled && (market.yesOrders?.length > 0 || market.noOrders?.length > 0) && (
                             <div className="market-orders">
                               <table className="mini-table">
                                 <thead>
                                   <tr>
+                                    <th>Side</th>
                                     <th>Price</th>
                                     <th>Amount</th>
                                     <th>Cost</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {market.orders.map((order, j) => (
-                                    <tr key={j}>
+                                  {market.yesOrders?.map((order, j) => (
+                                    <tr key={`yes-${j}`} className="yes-order-row">
+                                      <td className="side-yes">🟢 YES</td>
+                                      <td>{order.price}%</td>
+                                      <td>{formatSats(order.amount)}</td>
+                                      <td>{formatSats(order.cost)}</td>
+                                    </tr>
+                                  ))}
+                                  {market.noOrders?.map((order, j) => (
+                                    <tr key={`no-${j}`} className="no-order-row">
+                                      <td className="side-no">🔴 NO</td>
                                       <td>{order.price}%</td>
                                       <td>{formatSats(order.amount)}</td>
                                       <td>{formatSats(order.cost)}</td>
@@ -1286,14 +1375,15 @@ export default function BotAdmin({ onClose }) {
                                   ))}
                                   <tr className="total-row">
                                     <td><strong>Total</strong></td>
-                                    <td><strong>{formatSats(market.total_amount)}</strong></td>
-                                    <td><strong>{formatSats(market.total_cost)}</strong></td>
+                                    <td></td>
+                                    <td><strong>{formatSats((market.summary?.yesSideAmount || 0) + (market.summary?.noSideAmount || 0))}</strong></td>
+                                    <td><strong>{formatSats(market.summary?.totalCost || 0)}</strong></td>
                                   </tr>
                                 </tbody>
                               </table>
                             </div>
                           )}
-                          {!market.disabled && market.orders.length === 0 && (
+                          {!market.disabled && (!market.yesOrders?.length && !market.noOrders?.length) && (
                             <div className="no-orders">No orders (weight too low or no shape)</div>
                           )}
                         </div>

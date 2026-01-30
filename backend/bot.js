@@ -3373,7 +3373,8 @@ function getDeploymentPreview(userId) {
       orders.push({
         price: point.price,
         amount: point.amount,
-        cost: cost
+        cost,
+        side: point.price < crossoverPoint ? 'yes' : 'no'
       });
       
       marketCost += cost;

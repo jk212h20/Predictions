@@ -2001,12 +2001,12 @@ app.get('/api/admin/bot/shapes/default', authMiddleware, adminMiddleware, (req, 
 
 // Save a new shape
 app.post('/api/admin/bot/shapes', authMiddleware, adminMiddleware, (req, res) => {
-  const { name, shape_type, params, normalized_points } = req.body;
+  const { name, shape_type, params, normalized_points, crossover_point } = req.body;
   if (!name || !shape_type) {
     return res.status(400).json({ error: 'name and shape_type are required' });
   }
   try {
-    const shape = bot.saveShape(name, shape_type, params || {}, normalized_points);
+    const shape = bot.saveShape(name, shape_type, params || {}, normalized_points, crossover_point || 25);
     res.json({ success: true, shape });
   } catch (err) {
     res.status(500).json({ error: 'Failed to save shape', message: err.message });

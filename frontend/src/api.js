@@ -329,11 +329,11 @@ export const getDefaultShape = () =>
   fetch(`${API_BASE}/admin/bot/shapes/default`, { headers: getHeaders() }).then(handleResponse);
 
 // Save a new shape
-export const saveShape = (name, shape_type, params = {}, normalized_points = null) =>
+export const saveShape = (name, shape_type, params = {}, normalized_points = null, crossover_point = 25) =>
   fetch(`${API_BASE}/admin/bot/shapes`, {
     method: 'POST',
     headers: getHeaders(),
-    body: JSON.stringify({ name, shape_type, params, normalized_points }),
+    body: JSON.stringify({ name, shape_type, params, normalized_points, crossover_point }),
   }).then(handleResponse);
 
 // Get a specific shape
