@@ -1697,7 +1697,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               </div>
               {market.orderBook?.no.map((o, i) => {
                 const shares = satsToShares(o.total_sats);
-                const priceSats = (1000 - o.price_sats) * 10; // NO price = 100 - YES price
+                const priceSats = (100 - o.price_sats) * 10; // NO price = 100 - YES price
                 const totalCost = shares * priceSats;
                 return (
                   <div 
