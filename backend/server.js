@@ -822,6 +822,20 @@ app.post('/api/wallet/simulate-payment', authMiddleware, (req, res) => {
 // Constants for withdrawal rules
 const AUTO_WITHDRAW_LIMIT = 100000; // 100k sats auto-approve limit
 
+// Get global withdrawal settings (admin can pause auto-withdrawals)
+function getWithdrawalSettings() {
+  let settings = db.prepare('SELECT * FROM withdrawal_settings WHERE id = ?').get('default');
+  if (!settings) {
+    // Create default settings
+    db.prepare(`
+      INSERT INTO withdrawal_settings (id, auto_withdraw_paused, pause_reason)
+      VALUES ('default', 0, NULL)
+    `).run();
+    settings = { id: 'default', auto_withdraw_paused: 0, pause_reason: null };
+  }
+  return settings;
+}
+
 app.post('/api/wallet/withdraw', authMiddleware, async (req, res) => {
   const { payment_request, amount_sats } = req.body;
   
@@ -851,9 +865,14 @@ app.post('/api/wallet/withdraw', authMiddleware, async (req, res) => {
     channelBalance = { outbound_sats: 0, is_real: true };
   }
   
+  // Check if auto-withdrawals are paused by admin
+  const withdrawalSettings = getWithdrawalSettings();
+  const isPaused = withdrawalSettings.auto_withdraw_paused === 1;
+  
   // Determine if auto-approve or pending
-  // Auto-approve if: amount <= 100k AND amount <= total deposits AND channel has liquidity
+  // Auto-approve if: NOT PAUSED AND amount <= 100k AND amount <= total deposits AND channel has liquidity
   const canAutoApprove = 
+    !isPaused &&
     amount_sats <= AUTO_WITHDRAW_LIMIT &&
     amount_sats <= totalDeposits &&
     channelBalance.outbound_sats >= amount_sats;
@@ -1264,7 +1283,7 @@ app.post('/api/orders', authMiddleware, (req, res) => {
       db.prepare(`
         INSERT INTO bets (id, market_id, yes_user_id, no_user_id, yes_order_id, no_order_id, price_sats, amount_sats)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(betId, market_id, yesUserId, noUserId, yesOrderId, noOrderId, 100 - tradePrice, matchAmount);
+      `).run(betId, market_id, yesUserId, noUserId, yesOrderId, noOrderId, 1000 - tradePrice, matchAmount);
       
       // Update matched order
       const newFilled = matchOrder.filled_sats + matchAmount;
@@ -1430,7 +1449,7 @@ app.delete('/api/orders/:id', authMiddleware, (req, res) => {
   const remaining = order.amount_sats - order.filled_sats;
   const refund = order.side === 'yes'
     ? Math.ceil(remaining * order.price_sats / 1000)
-    : Math.ceil(remaining * (100 - order.price_sats) / 1000);
+    : Math.ceil(remaining * (1000 - order.price_sats) / 1000);
   
   const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
   const newBalance = user.balance_sats + refund;
@@ -1514,7 +1533,7 @@ app.post('/api/admin/resolve', authMiddleware, adminMiddleware, (req, res) => {
     const remaining = order.amount_sats - order.filled_sats;
     const refund = order.side === 'yes'
       ? Math.ceil(remaining * order.price_sats / 1000)
-      : Math.ceil(remaining * (100 - order.price_sats) / 1000);
+      : Math.ceil(remaining * (1000 - order.price_sats) / 1000);
     
     db.prepare('UPDATE users SET balance_sats = balance_sats + ? WHERE id = ?').run(refund, order.user_id);
     db.prepare('UPDATE orders SET status = ? WHERE id = ?').run('cancelled', order.id);
@@ -4136,6 +4155,69 @@ app.post('/api/admin/restore-database', authMiddleware, adminMiddleware, (req, r
     });
   } catch (err) {
     res.status(500).json({ error: 'Restore failed', message: err.message });
+  }
+});
+
+// ==================== ADMIN WITHDRAWAL SETTINGS ====================
+
+// Get withdrawal settings (admin)
+app.get('/api/admin/withdrawals/settings', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const settings = getWithdrawalSettings();
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get withdrawal settings', message: err.message });
+  }
+});
+
+// Update withdrawal settings - pause/unpause auto-withdrawals (admin)
+app.put('/api/admin/withdrawals/settings', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const { auto_withdraw_paused, pause_reason } = req.body;
+    
+    if (auto_withdraw_paused === undefined) {
+      return res.status(400).json({ error: 'auto_withdraw_paused is required' });
+    }
+    
+    const paused = auto_withdraw_paused ? 1 : 0;
+    
+    // Ensure settings row exists
+    getWithdrawalSettings();
+    
+    // Update settings
+    if (paused) {
+      db.prepare(`
+        UPDATE withdrawal_settings 
+        SET auto_withdraw_paused = 1, 
+            pause_reason = ?, 
+            paused_by = ?, 
+            paused_at = datetime('now'),
+            updated_at = datetime('now')
+        WHERE id = 'default'
+      `).run(pause_reason || 'Paused by admin', req.user.id);
+    } else {
+      db.prepare(`
+        UPDATE withdrawal_settings 
+        SET auto_withdraw_paused = 0, 
+            pause_reason = NULL, 
+            paused_by = NULL, 
+            paused_at = NULL,
+            updated_at = datetime('now')
+        WHERE id = 'default'
+      `).run();
+    }
+    
+    const settings = getWithdrawalSettings();
+    
+    res.json({ 
+      success: true, 
+      settings,
+      message: paused 
+        ? 'Auto-withdrawals PAUSED - all withdrawals now require admin approval'
+        : 'Auto-withdrawals RESUMED - eligible withdrawals will process automatically'
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update withdrawal settings', message: err.message });
   }
 });
 

@@ -355,6 +355,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_onchain_deposits_credited ON onchain_deposits(credited);
   CREATE INDEX IF NOT EXISTS idx_onchain_withdrawals_status ON onchain_withdrawals(status);
   CREATE INDEX IF NOT EXISTS idx_onchain_withdrawals_user ON onchain_withdrawals(user_id);
+
+  -- ==================== WITHDRAWAL SETTINGS ====================
+
+  -- Global withdrawal settings (admin can pause auto-withdrawals)
+  CREATE TABLE IF NOT EXISTS withdrawal_settings (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    auto_withdraw_paused INTEGER DEFAULT 0,
+    pause_reason TEXT,
+    paused_by TEXT,
+    paused_at TEXT,
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (paused_by) REFERENCES users(id)
+  );
 `);
 
 // Migration: Add avatar_url column if it doesn't exist
