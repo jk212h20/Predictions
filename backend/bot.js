@@ -3331,6 +3331,7 @@ module.exports = {
   
   // Atomic operations
   atomicPullback,
+  placeOrderWithMatching,
   
   // Analytics
   getStats,
