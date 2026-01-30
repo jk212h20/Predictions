@@ -70,6 +70,16 @@ At 50% exposure (500K):
 - [x] **Atomic transactions for on-chain withdrawals**
 
 ### What's Left
+- [ ] **Two-Sided Liquidity Curve** (IN PROGRESS)
+  - [x] Database: Add crossover_point to bot_curve_shapes ✓
+  - [x] Backend: getEffectiveCurveTwoSided() returns YES/NO orders based on crossover ✓
+  - [x] Backend: calculateExposureWithAnnihilation() for exposure tracking ✓
+  - [x] Backend: deployAllOrdersTwoSided() deploys both YES and NO orders ✓
+  - [x] Backend: API endpoints for two-sided liquidity functions ✓
+  - [x] Frontend: API functions for two-sided liquidity ✓
+  - [ ] Frontend: Curve editor UI with draggable crossover slider
+  - [ ] Frontend: Color-coded bars (red=NO above, green=YES below)
+  - [ ] Frontend: Summary stats (spread, budget split, net exposure)
 - [ ] Mobile UI polish
 - [ ] Performance optimization for large order books
 - [ ] More sophisticated pullback strategies (optional enhancement)

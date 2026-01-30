@@ -2529,6 +2529,7 @@ function AdminPanel({ user, onClose }) {
   const [resolution, setResolution] = useState('yes');
   const [notes, setNotes] = useState('');
   const [filter, setFilter] = useState('all');
+  const [resolving, setResolving] = useState(false);
 
   useEffect(() => {
     loadMarkets();
@@ -2543,40 +2544,21 @@ function AdminPanel({ user, onClose }) {
     }
   };
 
-  const handleInitiate = async () => {
+  const handleResolve = async () => {
     if (!selectedMarket) return;
-    if (!confirm(`Are you sure you want to resolve "${selectedMarket.title}" as ${resolution.toUpperCase()}?`)) return;
+    if (!confirm(`Are you sure you want to resolve "${selectedMarket.title}" as ${resolution.toUpperCase()}? This action is immediate and cannot be undone.`)) return;
     
+    setResolving(true);
     try {
-      await api.initiateResolution(selectedMarket.id, resolution, notes);
-      alert('Resolution initiated. Will be confirmed in 24 hours unless cancelled.');
+      const result = await api.resolveMarket(selectedMarket.id, resolution, notes);
+      alert(`Market resolved as ${resolution.toUpperCase()}!\n\nBets settled: ${result.bets_settled}\nOrders cancelled: ${result.orders_cancelled}`);
       loadMarkets();
       setSelectedMarket(null);
+      setNotes('');
     } catch (err) {
       alert(err.message);
     }
-  };
-
-  const handleCancel = async (marketId) => {
-    try {
-      await api.cancelResolution(marketId);
-      alert('Resolution cancelled');
-      loadMarkets();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  const handleEmergencyConfirm = async (marketId) => {
-    const code = prompt('Enter emergency code:');
-    if (!code) return;
-    try {
-      await api.confirmResolution(marketId, code);
-      alert('Market resolved!');
-      loadMarkets();
-    } catch (err) {
-      alert(err.message);
-    }
+    setResolving(false);
   };
 
   const filteredMarkets = markets.filter(m => {
@@ -2607,14 +2589,9 @@ function AdminPanel({ user, onClose }) {
                 <span>Bets: {m.active_bets || 0}</span>
                 <span>Volume: {formatSats(m.total_volume || 0)} sats</span>
               </div>
-              {m.status === 'pending_resolution' && (
-                <div className="am-actions">
-                  <button className="btn btn-small btn-danger" onClick={() => handleCancel(m.id)}>
-                    Cancel Resolution
-                  </button>
-                  <button className="btn btn-small btn-warning" onClick={() => handleEmergencyConfirm(m.id)}>
-                    Emergency Confirm
-                  </button>
+              {m.status === 'resolved' && m.resolution && (
+                <div className="am-resolution">
+                  Resolved: <strong>{m.resolution.toUpperCase()}</strong>
                 </div>
               )}
             </div>
@@ -2649,8 +2626,12 @@ function AdminPanel({ user, onClose }) {
               value={notes}
               onChange={e => setNotes(e.target.value)}
             />
-            <button className="btn btn-danger" onClick={handleInitiate}>
-              Initiate Resolution (24hr delay)
+            <button 
+              className="btn btn-danger" 
+              onClick={handleResolve}
+              disabled={resolving}
+            >
+              {resolving ? 'Resolving...' : `Resolve as ${resolution.toUpperCase()}`}
             </button>
           </div>
         )}

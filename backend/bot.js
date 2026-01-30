@@ -145,17 +145,22 @@ function generateShape(shapeType, params = {}) {
 
 /**
  * Save a curve shape to the library
+ * @param {string} name - Shape name
+ * @param {string} shapeType - Type of shape
+ * @param {object} params - Shape parameters
+ * @param {Array} normalizedPoints - Pre-computed normalized points (optional)
+ * @param {number} crossoverPoint - Price where YES/NO switch occurs (default 25)
  */
-function saveShape(name, shapeType, params = {}, normalizedPoints = null) {
+function saveShape(name, shapeType, params = {}, normalizedPoints = null, crossoverPoint = 25) {
   const points = normalizedPoints || generateShape(shapeType, params);
   const id = uuidv4();
   
   db.prepare(`
-    INSERT INTO bot_curve_shapes (id, name, shape_type, params, normalized_points)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(id, name, shapeType, JSON.stringify(params), JSON.stringify(points));
+    INSERT INTO bot_curve_shapes (id, name, shape_type, params, normalized_points, crossover_point)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, name, shapeType, JSON.stringify(params), JSON.stringify(points), crossoverPoint);
   
-  return { id, name, shapeType, params, normalizedPoints: points };
+  return { id, name, shapeType, params, normalizedPoints: points, crossoverPoint };
 }
 
 /**
@@ -1111,6 +1116,872 @@ function resetAllCurveCenters() {
   
   reset();
   return markets.length;
+}
+
+// ==================== TWO-SIDED LIQUIDITY ====================
+
+/**
+ * Get effective curve for a market with two-sided liquidity (YES and NO orders)
+ * 
+ * The crossover point determines where the bot switches from YES seller to NO seller:
+ * - Below crossover: Bot sells YES shares (takes YES side)
+ * - Above crossover: Bot sells NO shares (takes NO side)
+ * - At crossover: Gap/spread (no liquidity) - prevents self-trading
+ * 
+ * @param {string} marketId - Market to get curve for
+ * @param {number|null} totalBudget - Total budget to distribute (if null, uses calculated budget)
+ * @returns {object} { yesOrders: [...], noOrders: [...], crossoverPoint, summary }
+ */
+function getEffectiveCurveTwoSided(marketId, totalBudget = null) {
+  const SATS_PER_SHARE = 1000;
+  const MIN_SHARES = 1;
+  
+  const config = getConfig();
+  const market = db.prepare('SELECT * FROM markets WHERE id = ?').get(marketId);
+  if (!market) return null;
+  
+  const override = getMarketOverride(marketId);
+  
+  // Check if disabled
+  if (override?.override_type === 'disable') {
+    return null;
+  }
+  
+  // Get market weight
+  let weightRecord = getMarketWeight(marketId);
+  if (!weightRecord) {
+    initializeMarketWeights();
+    weightRecord = getMarketWeight(marketId);
+  }
+  
+  const marketWeight = weightRecord?.weight || 0;
+  if (marketWeight === 0) return null;
+  
+  // Get the default shape and its crossover point
+  const defaultShape = getDefaultShape();
+  const crossoverPoint = defaultShape.crossover_point || 25;
+  
+  // Get shape points (normalized)
+  let shape;
+  if (override?.override_type === 'replace' && override.custom_curve) {
+    shape = JSON.parse(override.custom_curve);
+  } else {
+    shape = defaultShape.normalized_points;
+  }
+  
+  // Apply market-specific multiplier
+  const marketMultiplier = override?.override_type === 'multiply' ? override.multiplier : 1.0;
+  
+  // Calculate budget for this market
+  const baseBudget = totalBudget !== null ? totalBudget : config.total_liquidity;
+  const marketBudgetSats = baseBudget * marketWeight * (totalBudget !== null ? 1.0 : config.global_multiplier * marketMultiplier);
+  const totalSharesForMarket = Math.floor(marketBudgetSats / SATS_PER_SHARE);
+  
+  if (totalSharesForMarket < MIN_SHARES) {
+    return null;
+  }
+  
+  // Split curve into YES and NO sides based on crossover point
+  const yesPoints = shape.filter(p => p.price < crossoverPoint);
+  const noPoints = shape.filter(p => p.price > crossoverPoint);
+  
+  // Calculate weight sums for each side
+  const yesWeightSum = yesPoints.reduce((sum, p) => sum + p.weight, 0);
+  const noWeightSum = noPoints.reduce((sum, p) => sum + p.weight, 0);
+  const totalWeight = yesWeightSum + noWeightSum;
+  
+  // Distribute shares using largest remainder method for each side
+  const distributeShares = (points, totalShares) => {
+    if (points.length === 0 || totalShares === 0) return [];
+    
+    const pointWeightSum = points.reduce((sum, p) => sum + p.weight, 0);
+    if (pointWeightSum === 0) return [];
+    
+    // Calculate raw shares
+    const rawShares = points.map(point => ({
+      price: point.price,
+      rawShare: (point.weight / pointWeightSum) * totalShares,
+    }));
+    
+    // Floor all values
+    let allocated = rawShares.map(p => ({
+      price: p.price,
+      shares: Math.floor(p.rawShare),
+      remainder: p.rawShare - Math.floor(p.rawShare)
+    }));
+    
+    // Distribute remainder
+    const totalAllocated = allocated.reduce((sum, p) => sum + p.shares, 0);
+    let remaining = totalShares - totalAllocated;
+    
+    if (remaining > 0) {
+      const sorted = [...allocated].sort((a, b) => b.remainder - a.remainder);
+      for (let i = 0; i < remaining && i < sorted.length; i++) {
+        const idx = allocated.findIndex(p => p.price === sorted[i].price);
+        if (idx >= 0) allocated[idx].shares++;
+      }
+    }
+    
+    return allocated
+      .filter(p => p.shares >= MIN_SHARES)
+      .map(p => ({
+        price: p.price,
+        amount: p.shares * SATS_PER_SHARE
+      }));
+  };
+  
+  // Distribute total shares proportionally between YES and NO sides
+  const yesShares = totalWeight > 0 ? Math.floor(totalSharesForMarket * (yesWeightSum / totalWeight)) : 0;
+  const noShares = totalSharesForMarket - yesShares;
+  
+  const yesOrders = distributeShares(yesPoints, yesShares);
+  const noOrders = distributeShares(noPoints, noShares);
+  
+  // Calculate costs
+  let yesCost = 0, noCost = 0;
+  for (const order of yesOrders) {
+    yesCost += Math.ceil(order.amount * order.price / 100);
+  }
+  for (const order of noOrders) {
+    noCost += Math.ceil(order.amount * (100 - order.price) / 100);
+  }
+  
+  return {
+    yesOrders,
+    noOrders,
+    crossoverPoint,
+    summary: {
+      yesSideCount: yesOrders.length,
+      noSideCount: noOrders.length,
+      yesSideAmount: yesOrders.reduce((sum, o) => sum + o.amount, 0),
+      noSideAmount: noOrders.reduce((sum, o) => sum + o.amount, 0),
+      yesSideCost: yesCost,
+      noSideCost: noCost,
+      totalCost: yesCost + noCost,
+      effectiveSpread: noOrders.length > 0 && yesOrders.length > 0
+        ? Math.min(...noOrders.map(o => o.price)) - Math.max(...yesOrders.map(o => o.price))
+        : null
+    }
+  };
+}
+
+/**
+ * Calculate current exposure with YES/NO annihilation
+ * 
+ * When bot holds both YES and NO shares in the same market, they cancel out:
+ * - 1 YES share + 1 NO share = 1000 sats (market-independent)
+ * - Net exposure per market = |YES shares - NO shares|
+ * - Annihilated value = min(YES, NO) × 1000 sats (returned to budget conceptually)
+ * 
+ * @returns {object} { netExposure, yesExposure, noExposure, annihilatedValue, byMarket }
+ */
+function calculateExposureWithAnnihilation() {
+  const config = getConfig();
+  
+  // Get YES exposure per market (bot is on YES side)
+  const yesExposureByMarket = db.prepare(`
+    SELECT 
+      market_id,
+      SUM(amount_sats) as total_sats
+    FROM bets
+    WHERE yes_user_id = ? AND status = 'active'
+    GROUP BY market_id
+  `).all(config.bot_user_id);
+  
+  // Get NO exposure per market (bot is on NO side)
+  const noExposureByMarket = db.prepare(`
+    SELECT 
+      market_id,
+      SUM(amount_sats) as total_sats
+    FROM bets
+    WHERE no_user_id = ? AND status = 'active'
+    GROUP BY market_id
+  `).all(config.bot_user_id);
+  
+  // Create maps for easy lookup
+  const yesMap = new Map(yesExposureByMarket.map(e => [e.market_id, e.total_sats]));
+  const noMap = new Map(noExposureByMarket.map(e => [e.market_id, e.total_sats]));
+  
+  // Get all unique market IDs
+  const allMarketIds = new Set([...yesMap.keys(), ...noMap.keys()]);
+  
+  // Calculate per-market metrics
+  let totalYesExposure = 0;
+  let totalNoExposure = 0;
+  let totalAnnihilated = 0;
+  let totalNetExposure = 0;
+  const byMarket = [];
+  
+  for (const marketId of allMarketIds) {
+    const yesAmount = yesMap.get(marketId) || 0;
+    const noAmount = noMap.get(marketId) || 0;
+    
+    // Annihilation: min of the two sides
+    const annihilated = Math.min(yesAmount, noAmount);
+    
+    // Net exposure: absolute difference
+    const netExposure = Math.abs(yesAmount - noAmount);
+    const netSide = yesAmount > noAmount ? 'yes' : (noAmount > yesAmount ? 'no' : 'neutral');
+    
+    totalYesExposure += yesAmount;
+    totalNoExposure += noAmount;
+    totalAnnihilated += annihilated;
+    totalNetExposure += netExposure;
+    
+    byMarket.push({
+      marketId,
+      yesAmount,
+      noAmount,
+      annihilated,
+      netExposure,
+      netSide
+    });
+  }
+  
+  return {
+    totalYesExposure,
+    totalNoExposure,
+    totalAnnihilated,
+    netExposure: totalNetExposure,
+    // Exposure used for pullback should be the NET exposure (after annihilation)
+    effectiveExposure: totalNetExposure,
+    byMarket
+  };
+}
+
+/**
+ * Update the crossover point for a saved curve shape
+ * @param {string} shapeId - Shape ID
+ * @param {number} crossoverPoint - New crossover point (5-50)
+ */
+function updateCrossoverPoint(shapeId, crossoverPoint) {
+  // Validate range
+  if (crossoverPoint < 5 || crossoverPoint > 50) {
+    throw new Error('Crossover point must be between 5 and 50');
+  }
+  
+  const shape = getShape(shapeId);
+  if (!shape) {
+    throw new Error('Shape not found');
+  }
+  
+  db.prepare(`
+    UPDATE bot_curve_shapes 
+    SET crossover_point = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(crossoverPoint, shapeId);
+  
+  return getShape(shapeId);
+}
+
+/**
+ * Deploy bot orders for all attendance markets with two-sided liquidity
+ * 
+ * This deploys BOTH YES and NO orders based on the crossover point:
+ * - Below crossover: YES orders (bot sells YES shares)
+ * - Above crossover: NO orders (bot sells NO shares)
+ * 
+ * @param {string} userId - User ID to place orders under
+ */
+function deployAllOrdersTwoSided(userId) {
+  const config = getConfig();
+  if (!config.is_active) {
+    return { success: false, error: 'Bot is not active' };
+  }
+  
+  if (!userId) {
+    return { success: false, error: 'User ID required' };
+  }
+  
+  // Step 1: Get user's current balance
+  const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
+  if (!user) {
+    return { success: false, error: 'User not found' };
+  }
+  
+  // Step 2: Cancel all existing orders and calculate refund
+  const existingOrders = db.prepare(`
+    SELECT * FROM orders WHERE user_id = ? AND status IN ('open', 'partial')
+  `).all(userId);
+  
+  let totalRefund = 0;
+  for (const order of existingOrders) {
+    const remaining = order.amount_sats - order.filled_sats;
+    const refund = order.side === 'yes'
+      ? Math.ceil(remaining * order.price_cents / 100)
+      : Math.ceil(remaining * (100 - order.price_cents) / 100);
+    totalRefund += refund;
+  }
+  
+  // Cancel all existing orders
+  db.prepare(`
+    UPDATE orders SET status = 'cancelled', updated_at = datetime('now')
+    WHERE user_id = ? AND status IN ('open', 'partial')
+  `).run(userId);
+  
+  // Refund to user
+  if (totalRefund > 0) {
+    db.prepare('UPDATE users SET balance_sats = balance_sats + ? WHERE id = ?').run(totalRefund, userId);
+  }
+  
+  // Step 3: Calculate effective balance
+  const effectiveBalance = user.balance_sats + totalRefund;
+  
+  // Step 4: Calculate deployable budget with annihilation-aware exposure
+  const maxBudget = Math.min(effectiveBalance, config.max_acceptable_loss);
+  const displayedLiquidity = maxBudget * config.global_multiplier;
+  
+  // Use annihilation-aware exposure calculation
+  const exposureData = calculateExposureWithAnnihilation();
+  const currentExposure = exposureData.effectiveExposure;
+  const pullbackRatio = calculatePullbackRatio(currentExposure, config.max_acceptable_loss);
+  const deployableBudget = displayedLiquidity * pullbackRatio;
+  
+  // Step 5: Get all attendance markets
+  const markets = db.prepare(`
+    SELECT m.id FROM markets m WHERE m.type = 'attendance' AND m.status = 'open'
+  `).all();
+  
+  if (markets.length === 0) {
+    return { 
+      success: true, 
+      deployed: 0, 
+      totalYesOrders: 0,
+      totalNoOrders: 0,
+      totalCost: 0, 
+      totalRefunded: totalRefund,
+      effectiveBalance,
+      pullbackRatio,
+      deployableBudget,
+      currentExposure,
+      annihilatedValue: exposureData.totalAnnihilated
+    };
+  }
+  
+  // Step 6: Collect all orders from all markets
+  let allYesOrders = [];
+  let allNoOrders = [];
+  let totalTheoreticCost = 0;
+  
+  for (const market of markets) {
+    const curves = getEffectiveCurveTwoSided(market.id, deployableBudget);
+    
+    if (!curves) continue;
+    
+    for (const order of curves.yesOrders) {
+      if (order.amount < 100) continue;
+      const cost = Math.ceil(order.amount * order.price / 100);
+      totalTheoreticCost += cost;
+      allYesOrders.push({ marketId: market.id, ...order, cost });
+    }
+    
+    for (const order of curves.noOrders) {
+      if (order.amount < 100) continue;
+      const cost = Math.ceil(order.amount * (100 - order.price) / 100);
+      totalTheoreticCost += cost;
+      allNoOrders.push({ marketId: market.id, ...order, cost });
+    }
+  }
+  
+  // Step 7: Scale down if needed
+  let scaleFactor = 1.0;
+  if (totalTheoreticCost > effectiveBalance && totalTheoreticCost > 0) {
+    scaleFactor = effectiveBalance / totalTheoreticCost;
+  }
+  
+  // Step 8: Place orders
+  const results = { 
+    deployed: 0, 
+    totalYesOrders: 0,
+    totalNoOrders: 0,
+    totalCost: 0, 
+    totalRefunded: totalRefund,
+    effectiveBalance,
+    maxBudget,
+    displayedLiquidity,
+    pullbackRatio,
+    deployableBudget,
+    currentExposure,
+    annihilatedValue: exposureData.totalAnnihilated
+  };
+  const marketOrderCounts = {};
+  
+  // Place YES orders
+  for (const order of allYesOrders) {
+    const scaledAmount = Math.floor(order.amount * scaleFactor);
+    if (scaledAmount < 100) continue;
+    
+    const actualCost = Math.ceil(scaledAmount * order.price / 100);
+    
+    const currentUser = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
+    if (currentUser.balance_sats < actualCost) continue;
+    
+    const orderId = uuidv4();
+    db.prepare(`
+      INSERT INTO orders (id, user_id, market_id, side, price_cents, amount_sats, filled_sats, status)
+      VALUES (?, ?, ?, 'yes', ?, ?, 0, 'open')
+    `).run(orderId, userId, order.marketId, order.price, scaledAmount);
+    
+    db.prepare('UPDATE users SET balance_sats = balance_sats - ? WHERE id = ?').run(actualCost, userId);
+    
+    results.totalCost += actualCost;
+    results.totalYesOrders++;
+    
+    if (!marketOrderCounts[order.marketId]) marketOrderCounts[order.marketId] = { yes: 0, no: 0 };
+    marketOrderCounts[order.marketId].yes++;
+  }
+  
+  // Place NO orders
+  for (const order of allNoOrders) {
+    const scaledAmount = Math.floor(order.amount * scaleFactor);
+    if (scaledAmount < 100) continue;
+    
+    const actualCost = Math.ceil(scaledAmount * (100 - order.price) / 100);
+    
+    const currentUser = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
+    if (currentUser.balance_sats < actualCost) continue;
+    
+    const orderId = uuidv4();
+    db.prepare(`
+      INSERT INTO orders (id, user_id, market_id, side, price_cents, amount_sats, filled_sats, status)
+      VALUES (?, ?, ?, 'no', ?, ?, 0, 'open')
+    `).run(orderId, userId, order.marketId, order.price, scaledAmount);
+    
+    db.prepare('UPDATE users SET balance_sats = balance_sats - ? WHERE id = ?').run(actualCost, userId);
+    
+    results.totalCost += actualCost;
+    results.totalNoOrders++;
+    
+    if (!marketOrderCounts[order.marketId]) marketOrderCounts[order.marketId] = { yes: 0, no: 0 };
+    marketOrderCounts[order.marketId].no++;
+  }
+  
+  results.deployed = Object.keys(marketOrderCounts).length;
+  results.scaleFactor = scaleFactor;
+  results.totalOrders = results.totalYesOrders + results.totalNoOrders;
+  
+  // Update bot_user_id
+  db.prepare(`
+    UPDATE bot_config SET bot_user_id = ?, updated_at = datetime('now') WHERE id = 'default'
+  `).run(userId);
+  
+  logBotAction('deploy_all_two_sided', JSON.stringify({ 
+    userId, 
+    effectiveBalance,
+    maxBudget,
+    pullbackRatio: pullbackRatio.toFixed(4),
+    deployableBudget,
+    scaleFactor: scaleFactor.toFixed(4),
+    totalYesOrders: results.totalYesOrders,
+    totalNoOrders: results.totalNoOrders,
+    totalCost: results.totalCost,
+    deployed: results.deployed,
+    annihilatedValue: exposureData.totalAnnihilated
+  }));
+  
+  return { success: true, ...results };
+}
+
+/**
+ * Get deployment preview with two-sided liquidity
+ * Shows exactly what YES and NO orders would be deployed
+ * 
+ * @param {string} userId - User ID to check balance against
+ */
+function getDeploymentPreviewTwoSided(userId) {
+  const config = getConfig();
+  
+  if (!userId) {
+    return { success: false, error: 'User ID required' };
+  }
+  
+  const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
+  if (!user) {
+    return { success: false, error: 'User not found' };
+  }
+  
+  // Get existing orders refund
+  const existingOrders = db.prepare(`
+    SELECT * FROM orders WHERE user_id = ? AND status IN ('open', 'partial')
+  `).all(userId);
+  
+  let totalRefund = 0;
+  for (const order of existingOrders) {
+    const remaining = order.amount_sats - order.filled_sats;
+    const refund = order.side === 'yes'
+      ? Math.ceil(remaining * order.price_cents / 100)
+      : Math.ceil(remaining * (100 - order.price_cents) / 100);
+    totalRefund += refund;
+  }
+  
+  const effectiveBalance = user.balance_sats + totalRefund;
+  const maxBudget = Math.min(effectiveBalance, config.max_acceptable_loss);
+  const displayedLiquidity = maxBudget * config.global_multiplier;
+  
+  // Get annihilation-aware exposure
+  const exposureData = calculateExposureWithAnnihilation();
+  const currentExposure = exposureData.effectiveExposure;
+  const pullbackRatio = calculatePullbackRatio(currentExposure, config.max_acceptable_loss);
+  const deployableBudget = displayedLiquidity * pullbackRatio;
+  
+  // Get default shape for crossover point
+  const defaultShape = getDefaultShape();
+  const crossoverPoint = defaultShape.crossover_point || 25;
+  
+  // Get all markets
+  const markets = db.prepare(`
+    SELECT m.id, m.title, g.name as grandmaster_name, g.fide_rating
+    FROM markets m
+    LEFT JOIN grandmasters g ON m.grandmaster_id = g.id
+    WHERE m.type = 'attendance' AND m.status = 'open'
+    ORDER BY g.fide_rating DESC
+  `).all();
+  
+  // Calculate orders for each market
+  const marketPreviews = [];
+  let totalYesCost = 0, totalNoCost = 0;
+  let totalYesOrders = 0, totalNoOrders = 0;
+  
+  for (const market of markets) {
+    const curves = getEffectiveCurveTwoSided(market.id, deployableBudget);
+    
+    if (!curves) {
+      marketPreviews.push({
+        market_id: market.id,
+        grandmaster_name: market.grandmaster_name,
+        fide_rating: market.fide_rating,
+        disabled: true,
+        yesOrders: [],
+        noOrders: [],
+        summary: null
+      });
+      continue;
+    }
+    
+    // Calculate costs
+    const yesOrdersWithCost = curves.yesOrders.map(o => ({
+      ...o,
+      cost: Math.ceil(o.amount * o.price / 100)
+    }));
+    const noOrdersWithCost = curves.noOrders.map(o => ({
+      ...o,
+      cost: Math.ceil(o.amount * (100 - o.price) / 100)
+    }));
+    
+    const marketYesCost = yesOrdersWithCost.reduce((sum, o) => sum + o.cost, 0);
+    const marketNoCost = noOrdersWithCost.reduce((sum, o) => sum + o.cost, 0);
+    
+    marketPreviews.push({
+      market_id: market.id,
+      grandmaster_name: market.grandmaster_name,
+      fide_rating: market.fide_rating,
+      disabled: false,
+      yesOrders: yesOrdersWithCost,
+      noOrders: noOrdersWithCost,
+      summary: {
+        ...curves.summary,
+        yesCost: marketYesCost,
+        noCost: marketNoCost,
+        totalCost: marketYesCost + marketNoCost
+      }
+    });
+    
+    totalYesCost += marketYesCost;
+    totalNoCost += marketNoCost;
+    totalYesOrders += curves.yesOrders.length;
+    totalNoOrders += curves.noOrders.length;
+  }
+  
+  const totalCost = totalYesCost + totalNoCost;
+  const hasBalance = effectiveBalance >= totalCost;
+  
+  return {
+    success: true,
+    user_balance: user.balance_sats,
+    existing_orders_refund: totalRefund,
+    effective_balance: effectiveBalance,
+    max_budget: maxBudget,
+    displayed_liquidity: displayedLiquidity,
+    pullback_ratio: pullbackRatio,
+    deployable_budget: deployableBudget,
+    current_exposure: currentExposure,
+    crossover_point: crossoverPoint,
+    // Annihilation info
+    exposure_details: {
+      totalYesExposure: exposureData.totalYesExposure,
+      totalNoExposure: exposureData.totalNoExposure,
+      annihilatedValue: exposureData.totalAnnihilated,
+      netExposure: exposureData.netExposure
+    },
+    // Order summary
+    total_yes_cost: totalYesCost,
+    total_no_cost: totalNoCost,
+    total_cost: totalCost,
+    total_yes_orders: totalYesOrders,
+    total_no_orders: totalNoOrders,
+    total_orders: totalYesOrders + totalNoOrders,
+    total_markets: marketPreviews.filter(m => !m.disabled).length,
+    has_sufficient_balance: hasBalance,
+    shortfall: hasBalance ? 0 : totalCost - effectiveBalance,
+    markets: marketPreviews,
+    config: {
+      max_acceptable_loss: config.max_acceptable_loss,
+      global_multiplier: config.global_multiplier,
+      threshold_percent: config.threshold_percent,
+      is_active: !!config.is_active
+    }
+  };
+}
+
+// ==================== PULLBACK THRESHOLDS ====================
+
+/**
+ * Default thresholds if none exist
+ * These define a smooth pullback curve with discrete steps
+ */
+const DEFAULT_THRESHOLDS = [
+  { exposure_percent: 0, pullback_percent: 100 },   // Full liquidity
+  { exposure_percent: 25, pullback_percent: 75 },   // 75% liquidity at 25% exposure
+  { exposure_percent: 50, pullback_percent: 50 },   // 50% liquidity at 50% exposure
+  { exposure_percent: 75, pullback_percent: 25 },   // 25% liquidity at 75% exposure
+  { exposure_percent: 90, pullback_percent: 10 },   // 10% liquidity at 90% exposure
+  { exposure_percent: 100, pullback_percent: 0 },   // No liquidity at max exposure
+];
+
+/**
+ * Get all pullback thresholds
+ * Returns array sorted by exposure_percent ascending
+ */
+function getThresholds() {
+  const thresholds = db.prepare(`
+    SELECT * FROM bot_pullback_thresholds
+    ORDER BY exposure_percent ASC
+  `).all();
+  
+  return thresholds;
+}
+
+/**
+ * Initialize default thresholds if none exist
+ */
+function initializeDefaultThresholds() {
+  const existing = db.prepare(`SELECT COUNT(*) as count FROM bot_pullback_thresholds`).get();
+  
+  if (existing.count === 0) {
+    const insert = db.prepare(`
+      INSERT INTO bot_pullback_thresholds (id, exposure_percent, pullback_percent)
+      VALUES (?, ?, ?)
+    `);
+    
+    const insertAll = db.transaction(() => {
+      for (const t of DEFAULT_THRESHOLDS) {
+        insert.run(uuidv4(), t.exposure_percent, t.pullback_percent);
+      }
+    });
+    
+    insertAll();
+  }
+  
+  return getThresholds();
+}
+
+/**
+ * Add or update a threshold
+ * @param {number} exposurePercent - Exposure level (0-100)
+ * @param {number} pullbackPercent - Pullback ratio at this level (0-100)
+ */
+function setThreshold(exposurePercent, pullbackPercent) {
+  // Validate
+  if (exposurePercent < 0 || exposurePercent > 100) {
+    throw new Error('Exposure percent must be between 0 and 100');
+  }
+  if (pullbackPercent < 0 || pullbackPercent > 100) {
+    throw new Error('Pullback percent must be between 0 and 100');
+  }
+  
+  // Check if threshold at this exposure already exists
+  const existing = db.prepare(`
+    SELECT * FROM bot_pullback_thresholds WHERE exposure_percent = ?
+  `).get(exposurePercent);
+  
+  if (existing) {
+    db.prepare(`
+      UPDATE bot_pullback_thresholds 
+      SET pullback_percent = ?, updated_at = datetime('now')
+      WHERE exposure_percent = ?
+    `).run(pullbackPercent, exposurePercent);
+  } else {
+    db.prepare(`
+      INSERT INTO bot_pullback_thresholds (id, exposure_percent, pullback_percent)
+      VALUES (?, ?, ?)
+    `).run(uuidv4(), exposurePercent, pullbackPercent);
+  }
+  
+  return getThresholds();
+}
+
+/**
+ * Remove a threshold
+ * Cannot remove 0% and 100% thresholds (they're required)
+ */
+function removeThreshold(exposurePercent) {
+  if (exposurePercent === 0 || exposurePercent === 100) {
+    throw new Error('Cannot remove 0% or 100% thresholds - they are required');
+  }
+  
+  db.prepare(`DELETE FROM bot_pullback_thresholds WHERE exposure_percent = ?`).run(exposurePercent);
+  return getThresholds();
+}
+
+/**
+ * Bulk set all thresholds (replaces existing)
+ * @param {Array} thresholds - Array of {exposure_percent, pullback_percent}
+ */
+function setAllThresholds(thresholds) {
+  // Validate
+  if (!Array.isArray(thresholds) || thresholds.length < 2) {
+    throw new Error('Must provide at least 2 thresholds');
+  }
+  
+  // Must include 0% and 100%
+  const has0 = thresholds.some(t => t.exposure_percent === 0);
+  const has100 = thresholds.some(t => t.exposure_percent === 100);
+  if (!has0 || !has100) {
+    throw new Error('Thresholds must include 0% and 100% exposure levels');
+  }
+  
+  // Validate all values
+  for (const t of thresholds) {
+    if (t.exposure_percent < 0 || t.exposure_percent > 100) {
+      throw new Error(`Invalid exposure percent: ${t.exposure_percent}`);
+    }
+    if (t.pullback_percent < 0 || t.pullback_percent > 100) {
+      throw new Error(`Invalid pullback percent: ${t.pullback_percent}`);
+    }
+  }
+  
+  const replaceAll = db.transaction(() => {
+    // Clear existing
+    db.prepare(`DELETE FROM bot_pullback_thresholds`).run();
+    
+    // Insert new
+    const insert = db.prepare(`
+      INSERT INTO bot_pullback_thresholds (id, exposure_percent, pullback_percent)
+      VALUES (?, ?, ?)
+    `);
+    
+    for (const t of thresholds) {
+      insert.run(uuidv4(), t.exposure_percent, t.pullback_percent);
+    }
+  });
+  
+  replaceAll();
+  return getThresholds();
+}
+
+/**
+ * Reset thresholds to defaults
+ */
+function resetThresholdsToDefaults() {
+  return setAllThresholds(DEFAULT_THRESHOLDS);
+}
+
+/**
+ * Calculate pullback ratio using custom thresholds
+ * Interpolates between threshold levels
+ * 
+ * @param {number} exposurePercent - Current exposure as % of max_loss (0-100)
+ * @returns {number} Pullback ratio (0-1)
+ */
+function calculatePullbackRatioFromThresholds(exposurePercent) {
+  let thresholds = getThresholds();
+  
+  // If no thresholds, initialize defaults
+  if (thresholds.length === 0) {
+    thresholds = initializeDefaultThresholds();
+  }
+  
+  // Sort by exposure (should already be sorted, but ensure)
+  thresholds.sort((a, b) => a.exposure_percent - b.exposure_percent);
+  
+  // Find the two thresholds we're between
+  let lower = thresholds[0];
+  let upper = thresholds[thresholds.length - 1];
+  
+  for (let i = 0; i < thresholds.length - 1; i++) {
+    if (exposurePercent >= thresholds[i].exposure_percent && 
+        exposurePercent <= thresholds[i + 1].exposure_percent) {
+      lower = thresholds[i];
+      upper = thresholds[i + 1];
+      break;
+    }
+  }
+  
+  // Linear interpolation between the two threshold levels
+  if (upper.exposure_percent === lower.exposure_percent) {
+    return lower.pullback_percent / 100;
+  }
+  
+  const exposureRange = upper.exposure_percent - lower.exposure_percent;
+  const pullbackRange = upper.pullback_percent - lower.pullback_percent;
+  const exposureProgress = (exposurePercent - lower.exposure_percent) / exposureRange;
+  const interpolatedPullback = lower.pullback_percent + (pullbackRange * exposureProgress);
+  
+  return Math.max(0, Math.min(1, interpolatedPullback / 100));
+}
+
+/**
+ * Get pullback status showing current position relative to thresholds
+ */
+function getPullbackStatus() {
+  const config = getConfig();
+  const currentExposure = calculateCurrentExposure();
+  const exposurePercent = (currentExposure / config.max_acceptable_loss) * 100;
+  
+  // Get thresholds
+  let thresholds = getThresholds();
+  if (thresholds.length === 0) {
+    thresholds = initializeDefaultThresholds();
+  }
+  
+  // Calculate current pullback ratio
+  const useCustom = config.use_custom_thresholds;
+  const pullbackRatio = useCustom 
+    ? calculatePullbackRatioFromThresholds(exposurePercent)
+    : calculatePullbackRatio(currentExposure, config.max_acceptable_loss);
+  
+  // Find next threshold
+  const sortedThresholds = [...thresholds].sort((a, b) => a.exposure_percent - b.exposure_percent);
+  let nextThreshold = null;
+  let prevThreshold = null;
+  
+  for (const t of sortedThresholds) {
+    if (t.exposure_percent > exposurePercent) {
+      nextThreshold = t;
+      break;
+    }
+    prevThreshold = t;
+  }
+  
+  return {
+    current_exposure_sats: currentExposure,
+    current_exposure_percent: exposurePercent,
+    max_loss_sats: config.max_acceptable_loss,
+    pullback_ratio: pullbackRatio,
+    pullback_percent: pullbackRatio * 100,
+    use_custom_thresholds: !!useCustom,
+    per_market_cap_percent: config.per_market_cap_percent || 25,
+    per_market_cap_sats: Math.floor(config.max_acceptable_loss * (config.per_market_cap_percent || 25) / 100),
+    thresholds: sortedThresholds,
+    current_threshold: prevThreshold,
+    next_threshold: nextThreshold,
+    distance_to_next: nextThreshold 
+      ? {
+          percent: nextThreshold.exposure_percent - exposurePercent,
+          sats: Math.floor(config.max_acceptable_loss * (nextThreshold.exposure_percent - exposurePercent) / 100)
+        }
+      : null
+  };
 }
 
 // ==================== EXPOSURE & RISK TRACKING ====================
@@ -2233,6 +3104,13 @@ module.exports = {
   setDefaultShape,
   deleteShape,
   updateShape,
+  updateCrossoverPoint,
+  
+  // Two-Sided Liquidity
+  getEffectiveCurveTwoSided,
+  calculateExposureWithAnnihilation,
+  deployAllOrdersTwoSided,
+  getDeploymentPreviewTwoSided,
   
   // Tier Management
   TIER_ORDER,
@@ -2292,5 +3170,16 @@ module.exports = {
   getActivityLog,
   
   // Deployment Preview
-  getDeploymentPreview
+  getDeploymentPreview,
+  
+  // Pullback Thresholds
+  DEFAULT_THRESHOLDS,
+  getThresholds,
+  initializeDefaultThresholds,
+  setThreshold,
+  removeThreshold,
+  setAllThresholds,
+  resetThresholdsToDefaults,
+  calculatePullbackRatioFromThresholds,
+  getPullbackStatus
 };

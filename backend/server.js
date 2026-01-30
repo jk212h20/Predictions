@@ -1434,8 +1434,8 @@ app.get('/api/admin/markets', authMiddleware, adminMiddleware, (req, res) => {
   res.json(markets);
 });
 
-// Initiate resolution (starts 24-hour delay)
-app.post('/api/admin/resolve/initiate', authMiddleware, adminMiddleware, (req, res) => {
+// Resolve market immediately (simplified - no delay, no emergency codes)
+app.post('/api/admin/resolve', authMiddleware, adminMiddleware, (req, res) => {
   const { market_id, resolution, notes } = req.body;
   
   if (!['yes', 'no'].includes(resolution)) {
@@ -1448,61 +1448,15 @@ app.post('/api/admin/resolve/initiate', authMiddleware, adminMiddleware, (req, r
     return res.status(400).json({ error: 'Market is not open' });
   }
   
-  // Set market to pending
-  const scheduledTime = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  db.prepare('UPDATE markets SET status = ? WHERE id = ?').run('pending_resolution', market_id);
-  
-  // Log resolution initiation
-  db.prepare(`
-    INSERT INTO resolution_log (id, market_id, admin_user_id, action, resolution, scheduled_time, notes)
-    VALUES (?, ?, ?, 'initiated', ?, ?, ?)
-  `).run(uuidv4(), market_id, req.user.id, resolution, scheduledTime, notes);
-  
-  res.json({ 
-    success: true, 
-    scheduled_time: scheduledTime,
-    message: 'Resolution scheduled. Confirm or cancel within 24 hours.'
-  });
-});
-
-// Confirm resolution (after delay or immediately with emergency code)
-app.post('/api/admin/resolve/confirm', authMiddleware, adminMiddleware, (req, res) => {
-  const { market_id, emergency_code } = req.body;
-  
-  const market = db.prepare('SELECT * FROM markets WHERE id = ?').get(market_id);
-  if (!market) return res.status(404).json({ error: 'Market not found' });
-  
-  const pendingResolution = db.prepare(`
-    SELECT * FROM resolution_log 
-    WHERE market_id = ? AND action = 'initiated'
-    ORDER BY created_at DESC LIMIT 1
-  `).get(market_id);
-  
-  if (!pendingResolution) {
-    return res.status(400).json({ error: 'No pending resolution found' });
-  }
-  
-  // Check if emergency or past scheduled time
-  const isEmergency = emergency_code === process.env.EMERGENCY_CODE;
-  const isPastScheduled = new Date() >= new Date(pendingResolution.scheduled_time);
-  
-  if (!isEmergency && !isPastScheduled) {
-    return res.status(400).json({ 
-      error: 'Resolution period not complete',
-      scheduled_time: pendingResolution.scheduled_time
-    });
-  }
-  
-  // Execute resolution
-  const resolution = pendingResolution.resolution;
+  // Resolve immediately
   db.prepare('UPDATE markets SET status = ?, resolution = ?, resolution_time = ?, resolved_by = ? WHERE id = ?')
     .run('resolved', resolution, new Date().toISOString(), req.user.id, market_id);
   
-  // Log confirmation
+  // Log resolution
   db.prepare(`
-    INSERT INTO resolution_log (id, market_id, admin_user_id, action, resolution)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(uuidv4(), market_id, req.user.id, isEmergency ? 'emergency_resolved' : 'confirmed', resolution);
+    INSERT INTO resolution_log (id, market_id, admin_user_id, action, resolution, notes)
+    VALUES (?, ?, ?, 'resolved', ?, ?)
+  `).run(uuidv4(), market_id, req.user.id, resolution, notes || null);
   
   // Settle all bets
   const bets = db.prepare('SELECT * FROM bets WHERE market_id = ? AND status = ?').all(market_id, 'active');
@@ -1544,27 +1498,9 @@ app.post('/api/admin/resolve/confirm', authMiddleware, adminMiddleware, (req, re
     success: true, 
     resolution, 
     bets_settled: bets.length,
-    orders_cancelled: openOrders.length
+    orders_cancelled: openOrders.length,
+    message: `Market resolved as ${resolution.toUpperCase()}`
   });
-});
-
-// Cancel pending resolution
-app.post('/api/admin/resolve/cancel', authMiddleware, adminMiddleware, (req, res) => {
-  const { market_id } = req.body;
-  
-  const market = db.prepare('SELECT * FROM markets WHERE id = ?').get(market_id);
-  if (!market || market.status !== 'pending_resolution') {
-    return res.status(400).json({ error: 'No pending resolution to cancel' });
-  }
-  
-  db.prepare('UPDATE markets SET status = ? WHERE id = ?').run('open', market_id);
-  
-  db.prepare(`
-    INSERT INTO resolution_log (id, market_id, admin_user_id, action)
-    VALUES (?, ?, ?, 'cancelled')
-  `).run(uuidv4(), market_id, req.user.id);
-  
-  res.json({ success: true, message: 'Resolution cancelled, market reopened' });
 });
 
 // Add grandmaster
@@ -1786,6 +1722,62 @@ app.get('/api/admin/bot/deployment-preview', authMiddleware, adminMiddleware, (r
   }
 });
 
+// ==================== TWO-SIDED LIQUIDITY ROUTES ====================
+
+// Get two-sided deployment preview (YES and NO orders)
+app.get('/api/admin/bot/deployment-preview-two-sided', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const preview = bot.getDeploymentPreviewTwoSided(req.user.id);
+    res.json(preview);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get two-sided preview', message: err.message });
+  }
+});
+
+// Deploy two-sided orders (YES and NO)
+app.post('/api/admin/bot/deploy-all-two-sided', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const result = bot.deployAllOrdersTwoSided(req.user.id);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to deploy two-sided orders', message: err.message });
+  }
+});
+
+// Get exposure with annihilation calculation
+app.get('/api/admin/bot/exposure-with-annihilation', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const exposure = bot.calculateExposureWithAnnihilation();
+    res.json(exposure);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to calculate exposure', message: err.message });
+  }
+});
+
+// Update crossover point for a shape
+app.put('/api/admin/bot/shapes/:id/crossover', authMiddleware, adminMiddleware, (req, res) => {
+  const { crossover_point } = req.body;
+  if (crossover_point === undefined || crossover_point < 5 || crossover_point > 50) {
+    return res.status(400).json({ error: 'crossover_point must be between 5 and 50' });
+  }
+  try {
+    const shape = bot.updateCrossoverPoint(req.params.id, crossover_point);
+    res.json({ success: true, shape });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Get two-sided effective curve for a specific market
+app.get('/api/admin/bot/markets/:marketId/effective-curve-two-sided', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const curves = bot.getEffectiveCurveTwoSided(req.params.marketId);
+    res.json({ market_id: req.params.marketId, ...curves });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get two-sided curve', message: err.message });
+  }
+});
+
 // Withdraw all bot orders (uses logged-in user's account)
 app.post('/api/admin/bot/withdraw-all', authMiddleware, adminMiddleware, (req, res) => {
   try {
@@ -1824,6 +1816,103 @@ app.get('/api/admin/bot/worst-case', authMiddleware, adminMiddleware, (req, res)
     res.json(worstCase);
   } catch (err) {
     res.status(500).json({ error: 'Failed to calculate worst case', message: err.message });
+  }
+});
+
+// ==================== PULLBACK THRESHOLDS ROUTES ====================
+
+// Get pullback status (current exposure relative to thresholds)
+app.get('/api/admin/bot/pullback/status', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const status = bot.getPullbackStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get pullback status', message: err.message });
+  }
+});
+
+// Get all thresholds
+app.get('/api/admin/bot/pullback/thresholds', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    let thresholds = bot.getThresholds();
+    if (thresholds.length === 0) {
+      thresholds = bot.initializeDefaultThresholds();
+    }
+    res.json(thresholds);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get thresholds', message: err.message });
+  }
+});
+
+// Set a single threshold
+app.put('/api/admin/bot/pullback/thresholds', authMiddleware, adminMiddleware, (req, res) => {
+  const { exposure_percent, pullback_percent } = req.body;
+  if (exposure_percent === undefined || pullback_percent === undefined) {
+    return res.status(400).json({ error: 'exposure_percent and pullback_percent are required' });
+  }
+  try {
+    const thresholds = bot.setThreshold(exposure_percent, pullback_percent);
+    res.json({ success: true, thresholds });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Remove a threshold
+app.delete('/api/admin/bot/pullback/thresholds/:exposure', authMiddleware, adminMiddleware, (req, res) => {
+  const exposurePercent = parseFloat(req.params.exposure);
+  try {
+    const thresholds = bot.removeThreshold(exposurePercent);
+    res.json({ success: true, thresholds });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Bulk set all thresholds (replace existing)
+app.post('/api/admin/bot/pullback/thresholds/bulk', authMiddleware, adminMiddleware, (req, res) => {
+  const { thresholds } = req.body;
+  if (!Array.isArray(thresholds)) {
+    return res.status(400).json({ error: 'thresholds must be an array' });
+  }
+  try {
+    const result = bot.setAllThresholds(thresholds);
+    res.json({ success: true, thresholds: result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Reset thresholds to defaults
+app.post('/api/admin/bot/pullback/thresholds/reset', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const thresholds = bot.resetThresholdsToDefaults();
+    res.json({ success: true, thresholds });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to reset thresholds', message: err.message });
+  }
+});
+
+// Update per_market_cap_percent and use_custom_thresholds in config
+app.put('/api/admin/bot/pullback/config', authMiddleware, adminMiddleware, (req, res) => {
+  const { per_market_cap_percent, use_custom_thresholds } = req.body;
+  try {
+    // Direct update to config table (these are new columns)
+    if (per_market_cap_percent !== undefined) {
+      if (per_market_cap_percent < 1 || per_market_cap_percent > 100) {
+        return res.status(400).json({ error: 'per_market_cap_percent must be between 1 and 100' });
+      }
+      const db = require('./database');
+      db.prepare(`UPDATE bot_config SET per_market_cap_percent = ? WHERE id = 'default'`).run(per_market_cap_percent);
+    }
+    if (use_custom_thresholds !== undefined) {
+      const db = require('./database');
+      db.prepare(`UPDATE bot_config SET use_custom_thresholds = ? WHERE id = 'default'`).run(use_custom_thresholds ? 1 : 0);
+    }
+    const config = bot.getConfig();
+    res.json({ success: true, config });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update pullback config', message: err.message });
   }
 });
 

@@ -99,6 +99,12 @@ export default function BotAdmin({ onClose }) {
   
   // Withdrawal card expansion state
   const [expandedWithdrawal, setExpandedWithdrawal] = useState(null);
+  
+  // Pullback thresholds state
+  const [pullbackStatus, setPullbackStatus] = useState(null);
+  const [thresholds, setThresholds] = useState([]);
+  const [loadingPullback, setLoadingPullback] = useState(false);
+  const [newThreshold, setNewThreshold] = useState({ exposure: 25, pullback: 75 });
 
   useEffect(() => {
     loadAllData();
@@ -463,6 +469,26 @@ export default function BotAdmin({ onClose }) {
             }}
           >
             🔍 Reconciliation
+          </button>
+          <button 
+            className={activeTab === 'pullback' ? 'active' : ''} 
+            onClick={async () => {
+              setActiveTab('pullback');
+              setLoadingPullback(true);
+              try {
+                const [status, thresholdsData] = await Promise.all([
+                  api.getPullbackStatus(),
+                  api.getThresholds()
+                ]);
+                setPullbackStatus(status);
+                setThresholds(thresholdsData || []);
+              } catch (err) {
+                console.error('Failed to load pullback data:', err);
+              }
+              setLoadingPullback(false);
+            }}
+          >
+            📊 Pullback
           </button>
         </div>
 
@@ -2130,6 +2156,433 @@ export default function BotAdmin({ onClose }) {
                 <div className="empty-state">
                   <p>Click the Reconciliation tab to load data.</p>
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* PULLBACK THRESHOLDS TAB */}
+          {activeTab === 'pullback' && (
+            <div className="bot-pullback">
+              <h3>📊 Pullback Thresholds</h3>
+              <p className="pullback-info">
+                Configure how liquidity is reduced as exposure increases. The bot automatically 
+                pulls back offers based on these thresholds to protect against max loss.
+              </p>
+              
+              {loadingPullback ? (
+                <div className="loading">Loading pullback data...</div>
+              ) : (
+                <>
+                  {/* CURRENT STATUS */}
+                  {pullbackStatus && (
+                    <div className="pullback-status-panel">
+                      <h4>Current Status</h4>
+                      <div className="status-grid">
+                        <div className="status-item">
+                          <label>Current Exposure</label>
+                          <value>{formatSats(pullbackStatus.current_exposure)} sats</value>
+                          <span>({pullbackStatus.exposure_percent?.toFixed(1)}% of max)</span>
+                        </div>
+                        <div className="status-item">
+                          <label>Pullback Ratio</label>
+                          <value>{((pullbackStatus.pullback_ratio || 1) * 100).toFixed(1)}%</value>
+                          <span>liquidity multiplier</span>
+                        </div>
+                        <div className="status-item">
+                          <label>Max Loss</label>
+                          <value>{formatSats(pullbackStatus.max_loss)} sats</value>
+                        </div>
+                        <div className="status-item">
+                          <label>Active Threshold</label>
+                          <value>
+                            {pullbackStatus.active_threshold 
+                              ? `${pullbackStatus.active_threshold.exposure_percent}% → ${pullbackStatus.active_threshold.pullback_percent}%`
+                              : 'None (full liquidity)'}
+                          </value>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* THRESHOLD VISUALIZATION */}
+                  <div className="threshold-chart">
+                    <h4>Threshold Curve</h4>
+                    <div className="chart-container">
+                      <div className="chart-y-axis">
+                        <span>100%</span>
+                        <span>75%</span>
+                        <span>50%</span>
+                        <span>25%</span>
+                        <span>0%</span>
+                      </div>
+                      <div className="chart-canvas">
+                        {/* Background grid */}
+                        <div className="chart-grid">
+                          {[0, 25, 50, 75, 100].map(y => (
+                            <div key={y} className="grid-line horizontal" style={{ bottom: `${y}%` }} />
+                          ))}
+                          {[0, 25, 50, 75, 100].map(x => (
+                            <div key={x} className="grid-line vertical" style={{ left: `${x}%` }} />
+                          ))}
+                        </div>
+                        
+                        {/* Threshold points and lines */}
+                        <svg className="threshold-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+                          {/* Draw the pullback curve */}
+                          <path 
+                            d={(() => {
+                              const sortedThresholds = [...thresholds].sort((a, b) => a.exposure_percent - b.exposure_percent);
+                              if (sortedThresholds.length === 0) {
+                                // Linear default: 100% at 0 exposure, 0% at 100 exposure
+                                return 'M 0 0 L 100 100';
+                              }
+                              let path = 'M 0 ' + (100 - (sortedThresholds[0]?.pullback_percent || 100));
+                              sortedThresholds.forEach(t => {
+                                path += ` L ${t.exposure_percent} ${100 - t.pullback_percent}`;
+                              });
+                              // Extend to 100% exposure at 0% pullback if not already there
+                              const last = sortedThresholds[sortedThresholds.length - 1];
+                              if (last && last.exposure_percent < 100) {
+                                path += ` L 100 100`;
+                              }
+                              return path;
+                            })()}
+                            fill="none"
+                            stroke="#f39c12"
+                            strokeWidth="2"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                          
+                          {/* Draw points */}
+                          {thresholds.map((t, i) => (
+                            <circle
+                              key={i}
+                              cx={t.exposure_percent}
+                              cy={100 - t.pullback_percent}
+                              r="4"
+                              fill="#f39c12"
+                              stroke="#fff"
+                              strokeWidth="1"
+                              vectorEffect="non-scaling-stroke"
+                            />
+                          ))}
+                          
+                          {/* Current position indicator */}
+                          {pullbackStatus && (
+                            <circle
+                              cx={pullbackStatus.exposure_percent || 0}
+                              cy={100 - ((pullbackStatus.pullback_ratio || 1) * 100)}
+                              r="6"
+                              fill="#e74c3c"
+                              stroke="#fff"
+                              strokeWidth="2"
+                              vectorEffect="non-scaling-stroke"
+                            />
+                          )}
+                        </svg>
+                        
+                        {/* Current position label */}
+                        {pullbackStatus && (
+                          <div 
+                            className="current-marker"
+                            style={{ 
+                              left: `${pullbackStatus.exposure_percent || 0}%`,
+                              bottom: `${(pullbackStatus.pullback_ratio || 1) * 100}%`
+                            }}
+                          >
+                            <span className="marker-label">YOU</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="chart-x-axis">
+                        <span>0%</span>
+                        <span>25%</span>
+                        <span>50%</span>
+                        <span>75%</span>
+                        <span>100%</span>
+                      </div>
+                      <div className="axis-labels">
+                        <span className="y-label">Liquidity %</span>
+                        <span className="x-label">Exposure %</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* THRESHOLD TABLE */}
+                  <div className="threshold-table">
+                    <h4>Thresholds ({thresholds.length})</h4>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Exposure %</th>
+                          <th>Pullback (Liquidity %)</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {thresholds.sort((a, b) => a.exposure_percent - b.exposure_percent).map((t, i) => (
+                          <tr key={i} className={pullbackStatus?.active_threshold?.exposure_percent === t.exposure_percent ? 'active' : ''}>
+                            <td>
+                              <input 
+                                type="number" 
+                                min="0" 
+                                max="100" 
+                                step="5"
+                                value={t.exposure_percent}
+                                onChange={async (e) => {
+                                  const newExposure = parseFloat(e.target.value) || 0;
+                                  setSaving(true);
+                                  try {
+                                    // Remove old, add new
+                                    await api.removeThreshold(t.exposure_percent);
+                                    const result = await api.setThreshold(newExposure, t.pullback_percent);
+                                    setThresholds(result.thresholds || []);
+                                  } catch (err) {
+                                    alert('Failed to update: ' + err.message);
+                                  }
+                                  setSaving(false);
+                                }}
+                                disabled={saving}
+                              />
+                              <span>%</span>
+                            </td>
+                            <td>
+                              <input 
+                                type="number" 
+                                min="0" 
+                                max="100" 
+                                step="5"
+                                value={t.pullback_percent}
+                                onChange={async (e) => {
+                                  const newPullback = parseFloat(e.target.value) || 0;
+                                  setSaving(true);
+                                  try {
+                                    const result = await api.setThreshold(t.exposure_percent, newPullback);
+                                    setThresholds(result.thresholds || []);
+                                  } catch (err) {
+                                    alert('Failed to update: ' + err.message);
+                                  }
+                                  setSaving(false);
+                                }}
+                                disabled={saving}
+                              />
+                              <span>%</span>
+                            </td>
+                            <td>
+                              <button 
+                                className="btn btn-sm btn-danger"
+                                onClick={async () => {
+                                  if (thresholds.length <= 1) {
+                                    alert('Must have at least one threshold');
+                                    return;
+                                  }
+                                  setSaving(true);
+                                  try {
+                                    const result = await api.removeThreshold(t.exposure_percent);
+                                    setThresholds(result.thresholds || []);
+                                  } catch (err) {
+                                    alert('Failed to remove: ' + err.message);
+                                  }
+                                  setSaving(false);
+                                }}
+                                disabled={saving}
+                              >
+                                🗑️
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* ADD NEW THRESHOLD */}
+                  <div className="add-threshold">
+                    <h4>Add Threshold</h4>
+                    <div className="add-threshold-form">
+                      <label>
+                        At Exposure:
+                        <input 
+                          type="number" 
+                          min="0" 
+                          max="100" 
+                          step="5"
+                          value={newThreshold.exposure}
+                          onChange={e => setNewThreshold({ ...newThreshold, exposure: parseFloat(e.target.value) || 0 })}
+                        />
+                        <span>%</span>
+                      </label>
+                      <label>
+                        Pullback to:
+                        <input 
+                          type="number" 
+                          min="0" 
+                          max="100" 
+                          step="5"
+                          value={newThreshold.pullback}
+                          onChange={e => setNewThreshold({ ...newThreshold, pullback: parseFloat(e.target.value) || 0 })}
+                        />
+                        <span>%</span>
+                      </label>
+                      <button 
+                        className="btn btn-success"
+                        onClick={async () => {
+                          if (thresholds.some(t => t.exposure_percent === newThreshold.exposure)) {
+                            alert('Threshold at this exposure already exists');
+                            return;
+                          }
+                          setSaving(true);
+                          try {
+                            const result = await api.setThreshold(newThreshold.exposure, newThreshold.pullback);
+                            setThresholds(result.thresholds || []);
+                            // Auto-increment for next one
+                            setNewThreshold({ 
+                              exposure: Math.min(newThreshold.exposure + 10, 100), 
+                              pullback: Math.max(newThreshold.pullback - 10, 0) 
+                            });
+                          } catch (err) {
+                            alert('Failed to add: ' + err.message);
+                          }
+                          setSaving(false);
+                        }}
+                        disabled={saving}
+                      >
+                        {saving ? 'Adding...' : '+ Add Threshold'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* PRESETS */}
+                  <div className="threshold-presets">
+                    <h4>Presets</h4>
+                    <div className="preset-buttons">
+                      <button 
+                        className="btn btn-outline"
+                        onClick={async () => {
+                          if (!confirm('Reset to default linear thresholds?')) return;
+                          setSaving(true);
+                          try {
+                            const result = await api.resetThresholds();
+                            setThresholds(result.thresholds || []);
+                          } catch (err) {
+                            alert('Failed to reset: ' + err.message);
+                          }
+                          setSaving(false);
+                        }}
+                        disabled={saving}
+                      >
+                        🔄 Reset to Defaults
+                      </button>
+                      <button 
+                        className="btn btn-outline"
+                        onClick={async () => {
+                          // Aggressive: quick pullback
+                          const aggressive = [
+                            { exposure_percent: 10, pullback_percent: 80 },
+                            { exposure_percent: 25, pullback_percent: 50 },
+                            { exposure_percent: 50, pullback_percent: 25 },
+                            { exposure_percent: 75, pullback_percent: 10 },
+                            { exposure_percent: 90, pullback_percent: 0 },
+                          ];
+                          if (!confirm('Apply aggressive preset? (faster pullback)')) return;
+                          setSaving(true);
+                          try {
+                            const result = await api.setAllThresholds(aggressive);
+                            setThresholds(result.thresholds || []);
+                          } catch (err) {
+                            alert('Failed: ' + err.message);
+                          }
+                          setSaving(false);
+                        }}
+                        disabled={saving}
+                      >
+                        ⚡ Aggressive
+                      </button>
+                      <button 
+                        className="btn btn-outline"
+                        onClick={async () => {
+                          // Conservative: slower pullback
+                          const conservative = [
+                            { exposure_percent: 25, pullback_percent: 90 },
+                            { exposure_percent: 50, pullback_percent: 75 },
+                            { exposure_percent: 75, pullback_percent: 50 },
+                            { exposure_percent: 90, pullback_percent: 25 },
+                            { exposure_percent: 100, pullback_percent: 0 },
+                          ];
+                          if (!confirm('Apply conservative preset? (slower pullback)')) return;
+                          setSaving(true);
+                          try {
+                            const result = await api.setAllThresholds(conservative);
+                            setThresholds(result.thresholds || []);
+                          } catch (err) {
+                            alert('Failed: ' + err.message);
+                          }
+                          setSaving(false);
+                        }}
+                        disabled={saving}
+                      >
+                        🐢 Conservative
+                      </button>
+                      <button 
+                        className="btn btn-outline"
+                        onClick={async () => {
+                          // Linear: simple 1:1
+                          const linear = [
+                            { exposure_percent: 0, pullback_percent: 100 },
+                            { exposure_percent: 25, pullback_percent: 75 },
+                            { exposure_percent: 50, pullback_percent: 50 },
+                            { exposure_percent: 75, pullback_percent: 25 },
+                            { exposure_percent: 100, pullback_percent: 0 },
+                          ];
+                          if (!confirm('Apply linear preset? (1:1 pullback)')) return;
+                          setSaving(true);
+                          try {
+                            const result = await api.setAllThresholds(linear);
+                            setThresholds(result.thresholds || []);
+                          } catch (err) {
+                            alert('Failed: ' + err.message);
+                          }
+                          setSaving(false);
+                        }}
+                        disabled={saving}
+                      >
+                        📏 Linear
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* EXPLANATION */}
+                  <div className="pullback-explanation">
+                    <h4>How It Works</h4>
+                    <ul>
+                      <li><strong>Exposure %</strong> = (Current NO shares value) / (Max Acceptable Loss)</li>
+                      <li><strong>Pullback %</strong> = How much liquidity to offer at that exposure level</li>
+                      <li>The bot uses the <em>highest matching</em> threshold (floor behavior)</li>
+                      <li>Example: At 30% exposure with thresholds at 25%→75% and 50%→50%, you get 75% liquidity</li>
+                    </ul>
+                  </div>
+
+                  <button 
+                    className="btn btn-outline"
+                    onClick={async () => {
+                      setLoadingPullback(true);
+                      try {
+                        const [status, thresholdsData] = await Promise.all([
+                          api.getPullbackStatus(),
+                          api.getThresholds()
+                        ]);
+                        setPullbackStatus(status);
+                        setThresholds(thresholdsData || []);
+                      } catch (err) {
+                        console.error('Failed to refresh:', err);
+                      }
+                      setLoadingPullback(false);
+                    }}
+                    style={{ marginTop: '1rem' }}
+                  >
+                    🔄 Refresh
+                  </button>
+                </>
               )}
             </div>
           )}

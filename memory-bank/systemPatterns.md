@@ -316,9 +316,81 @@ sendOnchain(address, amount_sats) → { txid }
 getOnchainBalance() → { confirmed_sats, unconfirmed_sats }
 ```
 
+## Two-Sided Liquidity (In Progress)
+
+### Overview
+The bot is being upgraded from one-sided (NO only) to two-sided market making. Instead of only offering NO shares, the bot will offer BOTH YES and NO shares with a "crossover point" that separates the two sides.
+
+### Crossover Point Concept
+```
+         ┌─────────────────────────────────────────────┐
+   50%   │ ▓▓▓▓▓▓▓▓ NO (selling NO shares)             │
+   45%   │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓ NO                           │
+   40%   │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ NO                       │
+   35%   │ ▓▓▓▓▓▓▓▓▓▓▓▓ NO                             │
+         │                                             │
+  ━━━━━━━│━━━━━━━[CROSSOVER @ 30%]━━━━━━━━━━━━━━━━━━━━━│
+         │                                             │
+   25%   │ ████████████ YES (selling YES shares)       │
+   20%   │ ████████████████████ YES                    │
+   15%   │ ████████████████ YES                        │
+   10%   │ ████████ YES                                │
+    5%   │ ████ YES                                    │
+         └─────────────────────────────────────────────┘
+```
+
+- **Above crossover**: Bot sells NO shares (bets player won't attend)
+- **Below crossover**: Bot sells YES shares (bets player will attend)
+- **At crossover**: Gap/spread - no liquidity (prevents self-trade)
+
+### Why Self-Trade is Impossible
+With crossover at 30%:
+- Bot's YES offers only at prices ≤25%
+- Bot's NO offers only at prices ≥35%
+- For a match: YES@P needs NO@P+ → Bot's YES@25% needs NO@25%+ but bot only has NO@35%+
+
+The spread gap acts as a natural barrier - exactly like real market makers.
+
+### YES/NO Annihilation
+When bot holds both YES and NO shares in the same market, they cancel out:
+```
+Bot holds: 100 YES + 50 NO in Market X
+
+Annihilation:
+  50 YES + 50 NO = 50 × 1000 sats = 50,000 sats returned to budget
+  Remaining: 50 YES shares (net long position)
+
+Net exposure = |YES shares - NO shares| × 1000 sats
+```
+
+### Updated Exposure Formula
+```javascript
+// Old (NO-only)
+exposure = sum of all NO bet amounts
+
+// New (two-sided with annihilation)
+yes_exposure = sum of YES bet amounts per market
+no_exposure = sum of NO bet amounts per market
+net_exposure_per_market = |yes_exposure - no_exposure|
+total_net_exposure = sum of net_exposure_per_market
+
+// Annihilated value (returned to budget)
+annihilated = sum of min(yes_exposure, no_exposure) per market
+```
+
+### Database Changes
+- `bot_curve_shapes.crossover_point` - price where bot switches from YES to NO (default 25)
+
+### UI: Draggable Crossover Curve Editor
+- Single unified curve with all price points (5-50%)
+- Draggable horizontal slider to set crossover point
+- Color coding: Red/Orange above crossover (NO), Green/Blue below (YES)
+- Each bar is draggable to set weight at that price
+- Summary shows: budget split, effective spread, net exposure
+
 ## Future Improvements (Backlog)
 
 - [ ] 3D Offers Landscape visualization
 - [ ] Auto-initialize weights if empty
 - [ ] Batch SQL updates for order scaling
-- [ ] On-chain withdrawal admin UI in BotAdmin.jsx
+- [x] On-chain withdrawal admin UI in BotAdmin.jsx

@@ -235,6 +235,22 @@ db.exec(`
   -- Index for weights
   CREATE INDEX IF NOT EXISTS idx_bot_weights_market ON bot_market_weights(market_id);
 
+  -- ==================== PULLBACK THRESHOLDS ====================
+
+  -- Explicit pullback thresholds (exposure % -> pullback ratio)
+  -- These define discrete points where pullback changes
+  CREATE TABLE IF NOT EXISTS bot_pullback_thresholds (
+    id TEXT PRIMARY KEY,
+    exposure_percent REAL NOT NULL,      -- e.g., 25 = 25% of max_loss
+    pullback_percent REAL NOT NULL,      -- e.g., 75 = 75% of liquidity remains
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(exposure_percent)
+  );
+
+  -- Index for thresholds
+  CREATE INDEX IF NOT EXISTS idx_bot_thresholds_exposure ON bot_pullback_thresholds(exposure_percent);
+
   -- ==================== PENDING WITHDRAWALS ====================
 
   -- Pending withdrawals requiring admin approval
@@ -413,6 +429,33 @@ try {
 // Values 5-50 (percentage), with lower = more offers at low prices (unlikely player)
 try {
   db.exec(`ALTER TABLE bot_market_weights ADD COLUMN curve_center REAL DEFAULT NULL`);
+} catch (e) {
+  // Column already exists, ignore
+}
+
+// Migration: Add per_market_cap_percent to bot_config for single-market exposure cap
+// This limits how much exposure any single market can create (as % of max_loss)
+// Default 25% means no single market can expose more than 25% of max_loss
+try {
+  db.exec(`ALTER TABLE bot_config ADD COLUMN per_market_cap_percent REAL DEFAULT 25.0`);
+} catch (e) {
+  // Column already exists, ignore
+}
+
+// Migration: Add use_custom_thresholds flag to bot_config
+// When true, uses bot_pullback_thresholds table; when false, uses linear formula
+try {
+  db.exec(`ALTER TABLE bot_config ADD COLUMN use_custom_thresholds INTEGER DEFAULT 0`);
+} catch (e) {
+  // Column already exists, ignore
+}
+
+// Migration: Add crossover_point to bot_curve_shapes for two-sided liquidity
+// The crossover_point determines where the bot switches from YES seller to NO seller
+// Values 5-50 (percentage). Below crossover = YES side, above = NO side
+// Default 25 means: sell YES at prices 5-24%, sell NO at prices 26-50%
+try {
+  db.exec(`ALTER TABLE bot_curve_shapes ADD COLUMN crossover_point INTEGER DEFAULT 25`);
 } catch (e) {
   // Column already exists, ignore
 }

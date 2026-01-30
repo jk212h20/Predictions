@@ -175,25 +175,11 @@ export const cancelWithdrawal = (withdrawal_id) =>
 export const getAdminMarkets = () =>
   fetch(`${API_BASE}/admin/markets`, { headers: getHeaders() }).then(handleResponse);
 
-export const initiateResolution = (market_id, resolution, notes) =>
-  fetch(`${API_BASE}/admin/resolve/initiate`, {
+export const resolveMarket = (market_id, resolution, notes) =>
+  fetch(`${API_BASE}/admin/resolve`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ market_id, resolution, notes }),
-  }).then(handleResponse);
-
-export const confirmResolution = (market_id, emergency_code) =>
-  fetch(`${API_BASE}/admin/resolve/confirm`, {
-    method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({ market_id, emergency_code }),
-  }).then(handleResponse);
-
-export const cancelResolution = (market_id) =>
-  fetch(`${API_BASE}/admin/resolve/cancel`, {
-    method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({ market_id }),
   }).then(handleResponse);
 
 // User Portfolio
@@ -673,3 +659,80 @@ export const addUserNote = (userId, note) =>
     headers: getHeaders(),
     body: JSON.stringify({ note }),
   }).then(handleResponse);
+
+// ==================== PULLBACK THRESHOLDS ====================
+
+// Get pullback status (current exposure relative to thresholds)
+export const getPullbackStatus = () =>
+  fetch(`${API_BASE}/admin/bot/pullback/status`, { headers: getHeaders() }).then(handleResponse);
+
+// Get all thresholds
+export const getThresholds = () =>
+  fetch(`${API_BASE}/admin/bot/pullback/thresholds`, { headers: getHeaders() }).then(handleResponse);
+
+// Set a single threshold
+export const setThreshold = (exposure_percent, pullback_percent) =>
+  fetch(`${API_BASE}/admin/bot/pullback/thresholds`, {
+    method: 'PUT',
+    headers: getHeaders(),
+    body: JSON.stringify({ exposure_percent, pullback_percent }),
+  }).then(handleResponse);
+
+// Remove a threshold
+export const removeThreshold = (exposure_percent) =>
+  fetch(`${API_BASE}/admin/bot/pullback/thresholds/${exposure_percent}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  }).then(handleResponse);
+
+// Bulk set all thresholds (replace existing)
+export const setAllThresholds = (thresholds) =>
+  fetch(`${API_BASE}/admin/bot/pullback/thresholds/bulk`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ thresholds }),
+  }).then(handleResponse);
+
+// Reset thresholds to defaults
+export const resetThresholds = () =>
+  fetch(`${API_BASE}/admin/bot/pullback/thresholds/reset`, {
+    method: 'POST',
+    headers: getHeaders(),
+  }).then(handleResponse);
+
+// Update pullback config (per_market_cap, use_custom_thresholds)
+export const updatePullbackConfig = (config) =>
+  fetch(`${API_BASE}/admin/bot/pullback/config`, {
+    method: 'PUT',
+    headers: getHeaders(),
+    body: JSON.stringify(config),
+  }).then(handleResponse);
+
+// ==================== TWO-SIDED LIQUIDITY ====================
+
+// Get two-sided deployment preview (YES and NO orders)
+export const getDeploymentPreviewTwoSided = () =>
+  fetch(`${API_BASE}/admin/bot/deployment-preview-two-sided`, { headers: getHeaders() }).then(handleResponse);
+
+// Deploy two-sided orders (YES and NO)
+export const deployAllOrdersTwoSided = () =>
+  fetch(`${API_BASE}/admin/bot/deploy-all-two-sided`, {
+    method: 'POST',
+    headers: getHeaders(),
+  }).then(handleResponse);
+
+// Get exposure with annihilation calculation
+export const getExposureWithAnnihilation = () =>
+  fetch(`${API_BASE}/admin/bot/exposure-with-annihilation`, { headers: getHeaders() }).then(handleResponse);
+
+// Update crossover point for a shape
+export const updateCrossoverPoint = (shapeId, crossover_point) =>
+  fetch(`${API_BASE}/admin/bot/shapes/${shapeId}/crossover`, {
+    method: 'PUT',
+    headers: getHeaders(),
+    body: JSON.stringify({ crossover_point }),
+  }).then(handleResponse);
+
+// Get two-sided effective curve for a specific market
+export const getEffectiveCurveTwoSided = (marketId) =>
+  fetch(`${API_BASE}/admin/bot/markets/${marketId}/effective-curve-two-sided`, { headers: getHeaders() }).then(handleResponse);
