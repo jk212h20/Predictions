@@ -4000,7 +4000,23 @@ app.post('/api/admin/reset-database', authMiddleware, adminMiddleware, async (re
     const seedGrandmasters = require('./seed-players');
     const seedMarkets = require('./seed');
     
-    // These modules export functions or auto-run - check if they need calling
+    // Create default admin user (whiten256@gmail.com / chance1chance)
+    try {
+      const bcrypt = require('bcryptjs');
+      const adminId = uuidv4();
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash('chance1chance', salt);
+      
+      db.prepare(`
+        INSERT INTO users (id, email, username, password_hash, balance_sats, is_admin, account_number)
+        VALUES (?, ?, ?, ?, 100000, 1, 1)
+      `).run(adminId, 'whiten256@gmail.com', 'admin', hashedPassword);
+      
+      console.log('Default admin user created: whiten256@gmail.com');
+    } catch (e) {
+      console.log('Admin user creation skipped:', e.message);
+    }
+    
     console.log('Database reset complete - schema recreated');
     
     res.json({
