@@ -711,26 +711,27 @@ export default function BotAdmin({ onClose }) {
                   })}
                   </div>
                   
-                  {/* CROSSOVER SLIDER - Integrated below the chart bars */}
-                  <div className="crossover-slider-integrated">
-                    <input 
-                      type="range"
-                      min="5"
-                      max="50"
-                      step="1"
-                      value={crossoverPoint}
-                      onChange={e => setCrossoverPoint(parseInt(e.target.value))}
-                      className="crossover-slider"
-                      style={{
-                        width: '100%',
-                        background: `linear-gradient(to right, #27ae60 0%, #27ae60 ${((crossoverPoint - 5) / 45) * 100}%, #e74c3c ${((crossoverPoint - 5) / 45) * 100}%, #e74c3c 100%)`
-                      }}
-                    />
-                    <div className="crossover-labels">
-                      <span className="crossover-label-yes">YES ← {crossoverPoint}%</span>
-                      <span className="crossover-label-no">{crossoverPoint}% → NO</span>
-                    </div>
-                  </div>
+                </div>
+              </div>
+
+              {/* CROSSOVER SLIDER - Below the chart */}
+              <div className="crossover-slider-standalone">
+                <div className="crossover-slider-row">
+                  <span className="crossover-label-yes">🟢 YES ← {crossoverPoint}%</span>
+                  <input 
+                    type="range"
+                    min="5"
+                    max="50"
+                    step="1"
+                    value={crossoverPoint}
+                    onChange={e => setCrossoverPoint(parseInt(e.target.value))}
+                    className="crossover-slider"
+                    style={{
+                      flex: 1,
+                      background: `linear-gradient(to right, #27ae60 0%, #27ae60 ${((crossoverPoint - 5) / 45) * 100}%, #e74c3c ${((crossoverPoint - 5) / 45) * 100}%, #e74c3c 100%)`
+                    }}
+                  />
+                  <span className="crossover-label-no">{crossoverPoint}% → NO 🔴</span>
                 </div>
               </div>
 

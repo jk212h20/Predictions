@@ -2344,53 +2344,55 @@ tr.status-lost {
   font-weight: 500;
 }
 
-/* Integrated Crossover Slider - Below Chart */
-.crossover-slider-integrated {
-  margin-top: 1.5rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border);
+/* Standalone Crossover Slider - Below Chart */
+.crossover-slider-standalone {
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--border);
 }
 
-.crossover-slider-integrated .crossover-slider {
-  width: 100%;
-  height: 10px;
+.crossover-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.crossover-slider-standalone .crossover-slider {
+  height: 12px;
   -webkit-appearance: none;
-  border-radius: 5px;
+  border-radius: 6px;
   cursor: pointer;
-  margin: 0.5rem 0;
+  margin: 0;
 }
 
-.crossover-slider-integrated .crossover-slider::-webkit-slider-thumb {
+.crossover-slider-standalone .crossover-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   background: white;
   border: 3px solid var(--accent);
   border-radius: 50%;
   cursor: grab;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.4);
 }
 
-.crossover-slider-integrated .crossover-slider::-webkit-slider-thumb:hover {
+.crossover-slider-standalone .crossover-slider::-webkit-slider-thumb:hover {
   transform: scale(1.1);
-}
-
-.crossover-labels {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 0.5rem;
 }
 
 .crossover-label-yes {
   color: #27ae60;
-  font-weight: 600;
-  font-size: 0.8125rem;
+  font-weight: 700;
+  font-size: 0.875rem;
+  white-space: nowrap;
 }
 
 .crossover-label-no {
   color: #e74c3c;
-  font-weight: 600;
-  font-size: 0.8125rem;
+  font-weight: 700;
+  font-size: 0.875rem;
+  white-space: nowrap;
 }
 
 /* Curve Summary */
