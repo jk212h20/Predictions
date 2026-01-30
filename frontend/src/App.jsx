@@ -1698,7 +1698,7 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
   );
 }
 
-function PortfolioModal({ user, onClose, onRefresh }) {
+function PortfolioModal({ user, onClose, onRefresh, onSelectMarket }) {
   const [activeTab, setActiveTab] = useState('positions');
   const [positions, setPositions] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -1874,7 +1874,14 @@ function PortfolioModal({ user, onClose, onRefresh }) {
                           
                           return (
                             <tr key={p.market_id} className={statusClass}>
-                              <td className="market-cell">{marketName}</td>
+                              <td className="market-cell">
+                                <a 
+                                  className="market-link" 
+                                  onClick={() => onSelectMarket && onSelectMarket(p.market_id)}
+                                >
+                                  {marketName}
+                                </a>
+                              </td>
                               <td>
                                 <span className={`position-badge side-${p.net_side}`}>
                                   {p.shares} {p.net_side?.toUpperCase()}
@@ -1937,7 +1944,12 @@ function PortfolioModal({ user, onClose, onRefresh }) {
                       {orders.map(o => (
                         <tr key={o.id}>
                           <td className="market-cell">
-                            {o.grandmaster_name ? `${o.grandmaster_name}: ` : ''}{o.title}
+                            <a 
+                              className="market-link" 
+                              onClick={() => onSelectMarket && onSelectMarket(o.market_id)}
+                            >
+                              {o.grandmaster_name ? `${o.grandmaster_name}: ` : ''}{o.title}
+                            </a>
                           </td>
                           <td>
                             <span className={`side-badge side-${o.side}`}>
@@ -2002,7 +2014,12 @@ function PortfolioModal({ user, onClose, onRefresh }) {
                             {new Date(t.created_at).toLocaleDateString()}
                           </td>
                           <td className="market-cell">
-                            {t.grandmaster_name ? `${t.grandmaster_name}: ` : ''}{t.market_title}
+                            <a 
+                              className="market-link" 
+                              onClick={() => onSelectMarket && onSelectMarket(t.market_id)}
+                            >
+                              {t.grandmaster_name ? `${t.grandmaster_name}: ` : ''}{t.market_title}
+                            </a>
                           </td>
                           <td>
                             <span className={`side-badge side-${t.user_side}`}>
@@ -2794,7 +2811,20 @@ function App() {
       )}
 
       {showPortfolio && user && (
-        <PortfolioModal user={user} onClose={() => setShowPortfolio(false)} onRefresh={refreshBalance} />
+        <PortfolioModal 
+          user={user} 
+          onClose={() => setShowPortfolio(false)} 
+          onRefresh={refreshBalance}
+          onSelectMarket={async (marketId) => {
+            setShowPortfolio(false);
+            try {
+              const market = await api.getMarket(marketId);
+              setSelectedMarket(market);
+            } catch (err) {
+              console.error('Failed to load market:', err);
+            }
+          }}
+        />
       )}
 
       {showAdmin && user?.is_admin === 1 && (

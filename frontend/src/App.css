@@ -1569,6 +1569,18 @@ label {
   font-weight: 500;
 }
 
+.market-link {
+  color: var(--accent);
+  cursor: pointer;
+  transition: color 0.2s ease;
+  text-decoration: none;
+}
+
+.market-link:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
 .date-cell {
   color: var(--text-muted);
   font-size: 0.8125rem;

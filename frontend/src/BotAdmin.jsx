@@ -600,7 +600,36 @@ export default function BotAdmin({ onClose }) {
                 </p>
               </div>
 
-              {/* CROSSOVER SLIDER */}
+              {/* BUDGET INFO - Above the slider */}
+              <div className="crossover-stats">
+                <div className="stat yes">
+                  <span className="stat-label">🟢 YES Budget:</span>
+                  <span className="stat-value">
+                    {(curvePoints.filter(p => p.price < crossoverPoint).reduce((s, p) => s + (p.weight || 0), 0) * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="stat no">
+                  <span className="stat-label">🔴 NO Budget:</span>
+                  <span className="stat-value">
+                    {(curvePoints.filter(p => p.price >= crossoverPoint).reduce((s, p) => s + (p.weight || 0), 0) * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="stat spread">
+                  <span className="stat-label">📊 Spread:</span>
+                  <span className="stat-value">
+                    {(() => {
+                      const yesPoints = curvePoints.filter(p => p.price < crossoverPoint && (p.weight || 0) > 0.005);
+                      const noPoints = curvePoints.filter(p => p.price >= crossoverPoint && (p.weight || 0) > 0.005);
+                      if (yesPoints.length === 0 || noPoints.length === 0) return 'N/A';
+                      const highestYes = Math.max(...yesPoints.map(p => p.price));
+                      const lowestNo = Math.min(...noPoints.map(p => p.price));
+                      return `${lowestNo - highestYes}% (${highestYes}% → ${lowestNo}%)`;
+                    })()}
+                  </span>
+                </div>
+              </div>
+
+              {/* CROSSOVER SLIDER - Right above the curve chart */}
               <div className="crossover-control">
                 <div className="crossover-header">
                   <label>⚖️ Crossover Point: <strong>{crossoverPoint}%</strong></label>
@@ -619,32 +648,116 @@ export default function BotAdmin({ onClose }) {
                   />
                   <span className="slider-label no">NO</span>
                 </div>
-                <div className="crossover-stats">
-                  <div className="stat yes">
-                    <span className="stat-label">🟢 YES Budget:</span>
-                    <span className="stat-value">
-                      {(curvePoints.filter(p => p.price < crossoverPoint).reduce((s, p) => s + (p.weight || 0), 0) * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="stat no">
-                    <span className="stat-label">🔴 NO Budget:</span>
-                    <span className="stat-value">
-                      {(curvePoints.filter(p => p.price >= crossoverPoint).reduce((s, p) => s + (p.weight || 0), 0) * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="stat spread">
-                    <span className="stat-label">📊 Spread:</span>
-                    <span className="stat-value">
-                      {(() => {
-                        const yesPoints = curvePoints.filter(p => p.price < crossoverPoint && (p.weight || 0) > 0.005);
-                        const noPoints = curvePoints.filter(p => p.price >= crossoverPoint && (p.weight || 0) > 0.005);
-                        if (yesPoints.length === 0 || noPoints.length === 0) return 'N/A';
-                        const highestYes = Math.max(...yesPoints.map(p => p.price));
-                        const lowestNo = Math.min(...noPoints.map(p => p.price));
-                        return `${lowestNo - highestYes}% (${highestYes}% → ${lowestNo}%)`;
-                      })()}
-                    </span>
-                  </div>
+              </div>
+
+              {/* DRAWABLE CURVE - Dynamic points */}
+              <div className="curve-drawable">
+                <div className="curve-y-axis">
+                  <span>50%</span>
+                  <span>25%</span>
+                  <span>10%</span>
+                  <span>0%</span>
+                </div>
+                <div className="curve-canvas">
+                  {curvePoints.sort((a, b) => a.price - b.price).map(point => {
+                    const weight = point.weight || 0;
+                    const heightPercent = Math.min((weight / 0.5) * 100, 100);
+                    const displayPercent = (weight * 100).toFixed(1);
+                    
+                    return (
+                      <div 
+                        key={point.price}
+                        className="curve-bar-container"
+                        onMouseDown={(e) => {
+                          // Prevent drag if clicking delete button
+                          if (e.target.classList.contains('delete-point')) return;
+                          
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const updateWeight = (clientY) => {
+                            const relativeY = rect.bottom - clientY;
+                            let newWeight = Math.max(0, Math.min(0.5, (relativeY / rect.height) * 0.5));
+                            newWeight = Math.round(newWeight * 200) / 200; // Round to 0.5%
+                            
+                            setCurvePoints(prev => {
+                              let points = [...prev];
+                              const idx = points.findIndex(p => p.price === point.price);
+                              if (idx === -1) return prev;
+                              
+                              const oldWeight = points[idx].weight || 0;
+                              
+                              // Calculate sum of OTHER non-zero points
+                              const otherPoints = points.filter((p, i) => i !== idx && p.weight > 0);
+                              const otherTotal = otherPoints.reduce((sum, p) => sum + p.weight, 0);
+                              
+                              // Set this point's new weight
+                              points[idx] = { ...points[idx], weight: newWeight };
+                              
+                              // Scale OTHER non-zero points proportionally to keep sum = 1
+                              // Points at 0 stay at 0 (they're not in otherPoints)
+                              if (otherTotal > 0) {
+                                const remaining = Math.max(0, 1 - newWeight);
+                                const scale = remaining / otherTotal;
+                                points = points.map((p, i) => {
+                                  if (i === idx) return p; // Already set
+                                  if (p.weight === 0) return p; // Stay at 0
+                                  return { ...p, weight: p.weight * scale };
+                                });
+                              }
+                              
+                              // Final normalization
+                              const total = points.reduce((sum, p) => sum + p.weight, 0);
+                              if (total > 0 && Math.abs(total - 1) > 0.001) {
+                                points = points.map(p => ({ ...p, weight: p.weight / total }));
+                              }
+                              
+                              return points;
+                            });
+                          };
+                          
+                          updateWeight(e.clientY);
+                          
+                          const handleMouseMove = (moveEvent) => updateWeight(moveEvent.clientY);
+                          const handleMouseUp = () => {
+                            window.removeEventListener('mousemove', handleMouseMove);
+                            window.removeEventListener('mouseup', handleMouseUp);
+                          };
+                          
+                          window.addEventListener('mousemove', handleMouseMove);
+                          window.addEventListener('mouseup', handleMouseUp);
+                        }}
+                      >
+                        <button 
+                          className="delete-point"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (curvePoints.length <= 1) {
+                              alert('Must have at least 1 point');
+                              return;
+                            }
+                            setCurvePoints(prev => {
+                              const remaining = prev.filter(p => p.price !== point.price);
+                              // Renormalize
+                              const total = remaining.reduce((sum, p) => sum + p.weight, 0);
+                              if (total > 0) {
+                                return remaining.map(p => ({ ...p, weight: p.weight / total }));
+                              }
+                              return remaining;
+                            });
+                          }}
+                          title="Delete this point"
+                        >
+                          ×
+                        </button>
+                        <div 
+                          className={`curve-bar-fill ${point.price < crossoverPoint ? 'yes-side' : 'no-side'}`}
+                          style={{ height: `${heightPercent}%` }}
+                        >
+                          <span className="bar-amount">{weight > 0.005 ? `${displayPercent}%` : ''}</span>
+                        </div>
+                        <span className="bar-price">{point.price}%</span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -783,117 +896,6 @@ export default function BotAdmin({ onClose }) {
                 >
                   + Add
                 </button>
-              </div>
-
-              {/* DRAWABLE CURVE - Dynamic points */}
-              <div className="curve-drawable">
-                <div className="curve-y-axis">
-                  <span>50%</span>
-                  <span>25%</span>
-                  <span>10%</span>
-                  <span>0%</span>
-                </div>
-                <div className="curve-canvas">
-                  {curvePoints.sort((a, b) => a.price - b.price).map(point => {
-                    const weight = point.weight || 0;
-                    const heightPercent = Math.min((weight / 0.5) * 100, 100);
-                    const displayPercent = (weight * 100).toFixed(1);
-                    
-                    return (
-                      <div 
-                        key={point.price}
-                        className="curve-bar-container"
-                        onMouseDown={(e) => {
-                          // Prevent drag if clicking delete button
-                          if (e.target.classList.contains('delete-point')) return;
-                          
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          const updateWeight = (clientY) => {
-                            const relativeY = rect.bottom - clientY;
-                            let newWeight = Math.max(0, Math.min(0.5, (relativeY / rect.height) * 0.5));
-                            newWeight = Math.round(newWeight * 200) / 200; // Round to 0.5%
-                            
-                            setCurvePoints(prev => {
-                              let points = [...prev];
-                              const idx = points.findIndex(p => p.price === point.price);
-                              if (idx === -1) return prev;
-                              
-                              const oldWeight = points[idx].weight || 0;
-                              
-                              // Calculate sum of OTHER non-zero points
-                              const otherPoints = points.filter((p, i) => i !== idx && p.weight > 0);
-                              const otherTotal = otherPoints.reduce((sum, p) => sum + p.weight, 0);
-                              
-                              // Set this point's new weight
-                              points[idx] = { ...points[idx], weight: newWeight };
-                              
-                              // Scale OTHER non-zero points proportionally to keep sum = 1
-                              // Points at 0 stay at 0 (they're not in otherPoints)
-                              if (otherTotal > 0) {
-                                const remaining = Math.max(0, 1 - newWeight);
-                                const scale = remaining / otherTotal;
-                                points = points.map((p, i) => {
-                                  if (i === idx) return p; // Already set
-                                  if (p.weight === 0) return p; // Stay at 0
-                                  return { ...p, weight: p.weight * scale };
-                                });
-                              }
-                              
-                              // Final normalization
-                              const total = points.reduce((sum, p) => sum + p.weight, 0);
-                              if (total > 0 && Math.abs(total - 1) > 0.001) {
-                                points = points.map(p => ({ ...p, weight: p.weight / total }));
-                              }
-                              
-                              return points;
-                            });
-                          };
-                          
-                          updateWeight(e.clientY);
-                          
-                          const handleMouseMove = (moveEvent) => updateWeight(moveEvent.clientY);
-                          const handleMouseUp = () => {
-                            window.removeEventListener('mousemove', handleMouseMove);
-                            window.removeEventListener('mouseup', handleMouseUp);
-                          };
-                          
-                          window.addEventListener('mousemove', handleMouseMove);
-                          window.addEventListener('mouseup', handleMouseUp);
-                        }}
-                      >
-                        <button 
-                          className="delete-point"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (curvePoints.length <= 1) {
-                              alert('Must have at least 1 point');
-                              return;
-                            }
-                            setCurvePoints(prev => {
-                              const remaining = prev.filter(p => p.price !== point.price);
-                              // Renormalize
-                              const total = remaining.reduce((sum, p) => sum + p.weight, 0);
-                              if (total > 0) {
-                                return remaining.map(p => ({ ...p, weight: p.weight / total }));
-                              }
-                              return remaining;
-                            });
-                          }}
-                          title="Delete this point"
-                        >
-                          ×
-                        </button>
-                        <div 
-                          className={`curve-bar-fill ${point.price < crossoverPoint ? 'yes-side' : 'no-side'}`}
-                          style={{ height: `${heightPercent}%` }}
-                        >
-                          <span className="bar-amount">{weight > 0.005 ? `${displayPercent}%` : ''}</span>
-                        </div>
-                        <span className="bar-price">{point.price}%</span>
-                      </div>
-                    );
-                  })}
-                </div>
               </div>
 
               {/* SUMMARY */}
