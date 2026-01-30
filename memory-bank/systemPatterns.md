@@ -1,5 +1,130 @@
 # System Patterns - Market Maker Bot
 
+## Integer-Based Trading System (NEW)
+
+### Overview
+The order matching system has been redesigned to use **pure integer arithmetic** with no rounding. This eliminates the small "house edge" caused by `Math.ceil()` rounding and ensures **perfect money conservation**.
+
+### Core Principles
+```
+1 share = 1000 sats payout to winner
+Price = sats per share (1-999)
+Matching: YES price + NO price ≥ 1000
+```
+
+### Key Rules
+1. **Prices are integers** (1-999 sats per share)
+2. **Shares are integers** (1, 2, 3, ... shares)
+3. **Percentages are display-only** (derived: price/1000 × 100)
+4. **No rounding ever** - all arithmetic is integer multiplication
+5. **Sitting order filled at exact price** - taker gets price improvement
+
+### Matching Example
+```
+Bob posts: NO @ 400 sats/share (5 shares) → pays 2000 sats
+Alice takes: YES @ 700 sats/share (5 shares) → offers up to 3500 sats
+
+Match condition: 700 + 400 = 1100 ≥ 1000 ✓
+
+Execution:
+  - Bob filled at HIS price: 400 sats/share
+  - Alice pays complement: 1000 - 400 = 600 sats/share
+  - Alice actual cost: 5 × 600 = 3000 sats
+  - Alice refund: 3500 - 3000 = 500 sats (price improvement!)
+  - Total locked: 2000 + 3000 = 5000 sats
+  - Winner gets: 5000 sats (exactly 5 × 1000)
+```
+
+### Money Conservation Guarantee
+```javascript
+// Perfect conservation at all times
+balance_total + locked_in_bets + locked_in_orders === initial_total
+
+// No rounding loss - all operations are:
+cost = shares × price_sats  // Integer × Integer = Integer
+payout = shares × 1000      // Integer × 1000 = Integer
+```
+
+### Database Schema (Orders)
+```sql
+CREATE TABLE orders (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  market_id TEXT NOT NULL,
+  side TEXT NOT NULL CHECK(side IN ('yes', 'no')),
+  price_sats INTEGER NOT NULL CHECK(price_sats >= 1 AND price_sats <= 999),
+  shares INTEGER NOT NULL CHECK(shares >= 1),
+  filled_shares INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'open',
+  created_at TEXT DEFAULT (datetime('now'))
+);
+```
+
+### Database Schema (Bets)
+```sql
+CREATE TABLE bets (
+  id TEXT PRIMARY KEY,
+  market_id TEXT NOT NULL,
+  yes_user_id TEXT NOT NULL,
+  no_user_id TEXT NOT NULL,
+  trade_price_sats INTEGER NOT NULL,  -- What YES side paid per share
+  shares INTEGER NOT NULL,
+  status TEXT DEFAULT 'active',
+  settled_at TEXT
+);
+```
+
+### API Format
+```javascript
+// Place Order
+POST /api/markets/:id/order
+{ "side": "yes", "price_sats": 600, "shares": 10 }
+
+// Response
+{
+  "order_id": "...",
+  "filled_shares": 10,
+  "remaining_shares": 0,
+  "cost": 5800,           // Actual sats spent (may be less than max)
+  "max_cost": 6000,       // What user was willing to pay
+  "refund": 200,          // Price improvement
+  "implied_pct": "60.0"   // For display only
+}
+```
+
+### Implied Percentage (Display Only)
+```javascript
+function impliedPercent(priceSats) {
+  return (priceSats / 1000 * 100).toFixed(1) + '%';
+}
+
+// Examples:
+// 600 sats → "60.0%"
+// 333 sats → "33.3%"
+// 999 sats → "99.9%"
+```
+
+### Auto-Settle
+When a user holds both YES and NO positions in the same market, they cancel out:
+```
+Alice has: 5 YES shares + 5 NO shares
+Auto-settle: Returns 5 × 1000 = 5000 sats to Alice
+Result: 0 YES, 0 NO positions
+```
+
+### Test Coverage
+27 tests validate the integer system:
+- Basic matching
+- Money conservation (EXACT, no rounding)
+- Price improvement
+- Validation
+- Auto-settle
+- Implied percentage
+- Stress tests (100+ trades)
+- Edge cases
+
+---
+
 ## Overview
 
 The bot is a market maker that provides liquidity to attendance prediction markets. It offers NO shares across all player markets, allowing users to bet YES on players attending.

@@ -1,8 +1,59 @@
 # Progress - Predictions Market Maker Bot
 
-## Latest Update: 2026-01-29 - Auto-Match Preview Bug Fix
+## Latest Update: 2026-01-30 - Integer-Based Trading System
 
 ### Latest Changes
+1. **MAJOR REDESIGN: Integer-Based Trading System** - Complete rewrite of order matching to eliminate rounding
+   - **Problem**: Old system used `Math.ceil()` for cost calculation, causing 1-2 sat "loss" per trade
+   - **Solution**: New system uses pure integer arithmetic with no rounding
+   - **Core principle**: 1 share = 1000 sats payout, price = sats per share (1-999)
+   - **Perfect conservation**: `balance + locked_in_bets + locked_in_orders === initial_total` (EXACT)
+
+2. **New Matching Logic**
+   - Prices are **sats per share** (integers 1-999), not percentages
+   - Shares are **integer counts** (1, 2, 3...), not sat amounts
+   - Matching: YES price + NO price ≥ 1000 sats
+   - **Sitting order filled at exact price** - taker gets price improvement
+   - Percentages are display-only: `implied_pct = price_sats / 1000 * 100`
+
+3. **Test Coverage** - 27 comprehensive tests all passing
+   - Basic matching, money conservation, price improvement
+   - Validation, auto-settle, implied percentage
+   - Stress tests (100+ trades with EXACT conservation)
+   - Edge cases (min/max prices, single share, insufficient balance)
+
+### Example Trade (New System)
+```
+Bob posts: NO @ 400 sats/share (5 shares) → pays 2000 sats
+Alice takes: YES @ 700 sats/share (5 shares) → offers up to 3500 sats
+
+Match: 700 + 400 = 1100 ≥ 1000 ✓
+
+Bob fills at 400/share (his price)
+Alice pays 600/share (1000 - 400) = 3000 total
+Alice refund: 500 sats (price improvement!)
+Total locked: 5000 sats = winner payout
+```
+
+### Files Changed
+- `backend/tests/testHelpers.js` - New integer-based matching logic
+- `backend/tests/integer-system.test.js` - 27 comprehensive tests
+- `memory-bank/systemPatterns.md` - Full documentation of new system
+
+### Migration Status
+- [x] Core matching logic implemented in testHelpers.js
+- [x] 27 tests passing with perfect money conservation
+- [x] Documentation updated
+- [ ] Update database schema (orders: price_sats, shares instead of price_cents, amount_sats)
+- [ ] Update server.js API endpoints
+- [ ] Update frontend components
+- [ ] Update bot deployment logic
+
+---
+
+## Previous Update: 2026-01-29 - Auto-Match Preview Bug Fix
+
+### Previous Changes
 1. **Fixed Auto-Match Preview Bug** - calculateAutoMatchesForDeployment was counting the same YES order multiple times
    - **Root cause**: Each proposed NO order independently queried the full order book, not tracking consumption
    - **Fix**: Now simulates actual matching by getting order book ONCE and tracking consumed amounts
