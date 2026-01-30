@@ -2179,21 +2179,18 @@ function getExposure() {
 }
 
 /**
- * Calculate max loss if all current bets resolve against bot
- * This is the "sats at risk" - what bot would pay out if all YES bets win
+ * Calculate current exposure (NET exposure after YES/NO annihilation)
+ * 
+ * With two-sided liquidity, bot can hold both YES and NO positions:
+ * - YES + NO in same market = they cancel out (annihilate)
+ * - Net exposure = |YES sats - NO sats| per market, summed across all markets
+ * 
+ * This is the "sats at risk" - what bot would pay out in worst case.
  */
 function calculateCurrentExposure() {
-  const config = getConfig();
-  
-  // Sum of all active bets where bot is on NO side
-  // If YES wins, bot loses amount_sats (the payout)
-  const betsExposure = db.prepare(`
-    SELECT COALESCE(SUM(amount_sats), 0) as total
-    FROM bets
-    WHERE no_user_id = ? AND status = 'active'
-  `).get(config.bot_user_id);
-  
-  return betsExposure.total;
+  // Use the annihilation-aware calculation for two-sided liquidity
+  const exposureData = calculateExposureWithAnnihilation();
+  return exposureData.effectiveExposure;
 }
 
 /**
@@ -3451,9 +3448,10 @@ function getStats() {
   // Holdings
   const holdings = getBotHoldings();
   const totalHoldings = holdings.reduce((sum, h) => sum + h.total_shares, 0);
-  
-  // Calculate max possible loss (if all active bets resolve YES)
-  const currentExposure = calculateCurrentExposure();
+
+  // Calculate exposure using annihilation-aware method (two-sided liquidity)
+  const exposureData = calculateExposureWithAnnihilation();
+  const currentExposure = exposureData.effectiveExposure;
   
   // Offers by price tier
   const offersByPrice = db.prepare(`
