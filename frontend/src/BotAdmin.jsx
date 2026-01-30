@@ -352,56 +352,27 @@ export default function BotAdmin({ onClose }) {
       <div className="modal modal-fullscreen bot-admin" onClick={e => e.stopPropagation()}>
         <div className="bot-header">
           <h2>🤖 Market Maker Bot</h2>
-          <div className="bot-status">
-            <span className={`status-indicator ${configForm.is_active ? 'active' : 'inactive'}`}>
-              {configForm.is_active ? '● ACTIVE' : '○ INACTIVE'}
+          <div className="bot-header-stats">
+            <span className="header-stat" title="Current Exposure / Max Loss">
+              📊 {stats?.risk?.exposurePercent || 0}%
+              <progress 
+                value={stats?.risk?.currentExposure || 0} 
+                max={stats?.config?.maxAcceptableLoss || 10000000}
+              />
             </span>
-            <button 
-              className={`btn btn-small ${configForm.is_active ? 'btn-danger' : 'btn-success'}`}
-              onClick={handleToggleActive}
-              disabled={saving}
-            >
-              {configForm.is_active ? 'Deactivate' : 'Activate'}
-            </button>
+            <span className="header-stat" title={`Budget: ${formatSats(stats?.config?.maxAcceptableLoss)} sats`}>
+              💰 {formatSats((stats?.config?.maxAcceptableLoss || 0) - (stats?.risk?.currentExposure || 0))}
+            </span>
+            <span className="header-stat" title={`${stats?.offers?.orderCount || 0} orders, ${formatSats(stats?.offers?.totalOffered)} sats offered`}>
+              📋 {stats?.offers?.orderCount || 0}
+            </span>
+            <span className="header-stat" title={`Total: ${formatSats(stats?.balance?.total)} sats, ${formatSats(stats?.balance?.locked)} locked`}>
+              💵 {formatSats(stats?.balance?.available)}
+            </span>
           </div>
-        </div>
-
-        {/* RISK OVERVIEW PANEL */}
-        <div className="bot-risk-panel">
-          <div className="risk-metric critical">
-            <label>Current Exposure</label>
-            <value>{formatSats(stats?.risk?.currentExposure || 0)} sats</value>
-            <progress 
-              value={stats?.risk?.currentExposure || 0} 
-              max={stats?.config?.maxAcceptableLoss || 10000000}
-            />
-            <span className="risk-percent">{stats?.risk?.exposurePercent || 0}% of Max Loss</span>
-          </div>
-          <div className="risk-metric success">
-            <label>Max Loss (Guaranteed Cap)</label>
-            <value>{formatSats(stats?.config?.maxAcceptableLoss)} sats</value>
-            <span className="safe">✓ Cannot exceed this</span>
-          </div>
-          <div className="risk-metric">
-            <label>Remaining Budget</label>
-            <value>{formatSats((stats?.config?.maxAcceptableLoss || 0) - (stats?.risk?.currentExposure || 0))} sats</value>
-            <span>Available before pullback = 0</span>
-          </div>
-          <div className="risk-metric">
-            <label>Pullback Ratio</label>
-            <value>{(parseFloat(stats?.risk?.pullbackRatio || 1) * 100).toFixed(1)}%</value>
-            <span>Liquidity multiplier</span>
-          </div>
-          <div className="risk-metric">
-            <label>Active Orders</label>
-            <value>{stats?.offers?.orderCount || 0}</value>
-            <span>{formatSats(stats?.offers?.totalOffered)} sats offered</span>
-          </div>
-          <div className="risk-metric">
-            <label>Bot Balance</label>
-            <value>{formatSats(stats?.balance?.total)} sats</value>
-            <span>{formatSats(stats?.balance?.locked)} locked in orders</span>
-          </div>
+          <span className={`status-indicator ${configForm.is_active ? 'active' : 'inactive'}`}>
+            {configForm.is_active ? '● ACTIVE' : '○ INACTIVE'}
+          </span>
         </div>
 
         {/* TABS */}
@@ -629,28 +600,7 @@ export default function BotAdmin({ onClose }) {
                 </div>
               </div>
 
-              {/* CROSSOVER SLIDER - Right above the curve chart */}
-              <div className="crossover-control">
-                <div className="crossover-header">
-                  <label>⚖️ Crossover Point: <strong>{crossoverPoint}%</strong></label>
-                  <span className="crossover-hint">Prices below → YES orders • Prices at/above → NO orders</span>
-                </div>
-                <div className="crossover-slider-container">
-                  <span className="slider-label yes">YES</span>
-                  <input 
-                    type="range"
-                    min="5"
-                    max="50"
-                    step="1"
-                    value={crossoverPoint}
-                    onChange={e => setCrossoverPoint(parseInt(e.target.value))}
-                    className="crossover-slider"
-                  />
-                  <span className="slider-label no">NO</span>
-                </div>
-              </div>
-
-              {/* DRAWABLE CURVE - Dynamic points */}
+              {/* DRAWABLE CURVE WITH INTEGRATED CROSSOVER SLIDER */}
               <div className="curve-drawable">
                 <div className="curve-y-axis">
                   <span>50%</span>
@@ -658,7 +608,8 @@ export default function BotAdmin({ onClose }) {
                   <span>10%</span>
                   <span>0%</span>
                 </div>
-                <div className="curve-canvas">
+                <div className="curve-main">
+                  <div className="curve-canvas">
                   {curvePoints.sort((a, b) => a.price - b.price).map(point => {
                     const weight = point.weight || 0;
                     const heightPercent = Math.min((weight / 0.5) * 100, 100);
@@ -758,6 +709,28 @@ export default function BotAdmin({ onClose }) {
                       </div>
                     );
                   })}
+                  </div>
+                  
+                  {/* CROSSOVER SLIDER - Integrated below the chart bars */}
+                  <div className="crossover-slider-integrated">
+                    <input 
+                      type="range"
+                      min="5"
+                      max="50"
+                      step="1"
+                      value={crossoverPoint}
+                      onChange={e => setCrossoverPoint(parseInt(e.target.value))}
+                      className="crossover-slider"
+                      style={{
+                        width: '100%',
+                        background: `linear-gradient(to right, #27ae60 0%, #27ae60 ${((crossoverPoint - 5) / 45) * 100}%, #e74c3c ${((crossoverPoint - 5) / 45) * 100}%, #e74c3c 100%)`
+                      }}
+                    />
+                    <div className="crossover-labels">
+                      <span className="crossover-label-yes">YES ← {crossoverPoint}%</span>
+                      <span className="crossover-label-no">{crossoverPoint}% → NO</span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
