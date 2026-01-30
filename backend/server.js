@@ -824,16 +824,34 @@ const AUTO_WITHDRAW_LIMIT = 100000; // 100k sats auto-approve limit
 
 // Get global withdrawal settings (admin can pause auto-withdrawals)
 function getWithdrawalSettings() {
-  let settings = db.prepare('SELECT * FROM withdrawal_settings WHERE id = ?').get('default');
-  if (!settings) {
-    // Create default settings
+  try {
+    // Ensure table exists
     db.prepare(`
-      INSERT INTO withdrawal_settings (id, auto_withdraw_paused, pause_reason)
-      VALUES ('default', 0, NULL)
+      CREATE TABLE IF NOT EXISTS withdrawal_settings (
+        id TEXT PRIMARY KEY,
+        auto_withdraw_paused INTEGER DEFAULT 0,
+        pause_reason TEXT,
+        paused_by TEXT,
+        paused_at TEXT,
+        updated_at TEXT DEFAULT (datetime('now'))
+      )
     `).run();
-    settings = { id: 'default', auto_withdraw_paused: 0, pause_reason: null };
+    
+    let settings = db.prepare('SELECT * FROM withdrawal_settings WHERE id = ?').get('default');
+    if (!settings) {
+      // Create default settings
+      db.prepare(`
+        INSERT INTO withdrawal_settings (id, auto_withdraw_paused, pause_reason)
+        VALUES ('default', 0, NULL)
+      `).run();
+      settings = { id: 'default', auto_withdraw_paused: 0, pause_reason: null };
+    }
+    return settings;
+  } catch (err) {
+    console.error('getWithdrawalSettings error:', err);
+    // Return default values even if DB fails
+    return { id: 'default', auto_withdraw_paused: 0, pause_reason: null };
   }
-  return settings;
 }
 
 app.post('/api/wallet/withdraw', authMiddleware, async (req, res) => {
