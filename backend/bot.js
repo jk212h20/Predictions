@@ -1279,28 +1279,30 @@ function calculateExposureWithAnnihilation() {
   const config = getConfig();
   
   // Get YES exposure per market (bot is on YES side)
+  // Cost paid = amount_sats × price / 100 (what YES side paid)
   const yesExposureByMarket = db.prepare(`
     SELECT 
       market_id,
-      SUM(amount_sats) as total_sats
+      SUM(CAST(amount_sats * price_cents AS INTEGER) / 100) as total_cost
     FROM bets
     WHERE yes_user_id = ? AND status = 'active'
     GROUP BY market_id
   `).all(config.bot_user_id);
   
   // Get NO exposure per market (bot is on NO side)
+  // Cost paid = amount_sats × (100 - price) / 100 (what NO side paid)
   const noExposureByMarket = db.prepare(`
     SELECT 
       market_id,
-      SUM(amount_sats) as total_sats
+      SUM(CAST(amount_sats * (100 - price_cents) AS INTEGER) / 100) as total_cost
     FROM bets
     WHERE no_user_id = ? AND status = 'active'
     GROUP BY market_id
   `).all(config.bot_user_id);
   
-  // Create maps for easy lookup
-  const yesMap = new Map(yesExposureByMarket.map(e => [e.market_id, e.total_sats]));
-  const noMap = new Map(noExposureByMarket.map(e => [e.market_id, e.total_sats]));
+  // Create maps for easy lookup (now using cost, not payout)
+  const yesMap = new Map(yesExposureByMarket.map(e => [e.market_id, e.total_cost]));
+  const noMap = new Map(noExposureByMarket.map(e => [e.market_id, e.total_cost]));
   
   // Get all unique market IDs
   const allMarketIds = new Set([...yesMap.keys(), ...noMap.keys()]);
