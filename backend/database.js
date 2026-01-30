@@ -520,6 +520,22 @@ try {
   console.log('Bets column migration skipped:', e.message);
 }
 
+// Migration: Create withdrawal_settings table if missing
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS withdrawal_settings (
+      id TEXT PRIMARY KEY DEFAULT 'default',
+      auto_withdraw_paused INTEGER DEFAULT 0,
+      pause_reason TEXT,
+      paused_by TEXT,
+      paused_at TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+} catch (e) {
+  console.log('withdrawal_settings table check:', e.message);
+}
+
 // Create LNURL auth challenges table (for tracking login attempts)
 db.exec(`
   CREATE TABLE IF NOT EXISTS lnurl_auth_challenges (
