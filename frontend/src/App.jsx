@@ -1495,6 +1495,29 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
   const [price, setPrice] = useState(50);
   const [shares, setShares] = useState(10);
   const [loading, setLoading] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  // Handle clicking on an order book offer to fill in the trade form
+  const handleOfferClick = (offerSide, priceCents, availableShares) => {
+    const newSide = offerSide === 'yes' ? 'no' : 'yes';
+    // Take the opposite side of the offer
+    setSide(newSide);
+    // Use the same price (probability)
+    setPrice(priceCents);
+    // Set shares to match what's available
+    setShares(availableShares);
+    
+    // Show toast notification
+    const costPerShare = newSide === 'yes' ? priceCents : (100 - priceCents);
+    const totalCost = Math.ceil(availableShares * SATS_PER_SHARE * costPerShare / 100);
+    setToast({
+      message: `✓ Form filled: ${availableShares} ${newSide.toUpperCase()} @ ${priceCents}%`,
+      subtext: `Cost: ${formatSats(totalCost)} sats — Click "Buy" to confirm!`
+    });
+    
+    // Auto-hide toast after 4 seconds
+    setTimeout(() => setToast(null), 4000);
+  };
 
   if (!market) return null;
 
@@ -1616,9 +1639,20 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
           </div>
         )}
 
+        {/* Toast notification */}
+        {toast && (
+          <div className="trade-toast">
+            <div className="toast-message">{toast.message}</div>
+            <div className="toast-subtext">{toast.subtext}</div>
+          </div>
+        )}
+
         <div className="order-book">
           <h3>Order Book</h3>
-          <p className="ob-hint">Offers available to trade against. Click to match!</p>
+          <p className="ob-hint">
+            👆 <strong>Click any offer to auto-fill your trade</strong> — you'll take the opposite side at that price. 
+            Then just hit "Buy" to complete the trade instantly!
+          </p>
           <div className="ob-container">
             <div className="ob-side ob-yes">
               <h4>YES Offers</h4>
@@ -1632,7 +1666,12 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
                 const priceSats = o.price_cents * 10; // 40% = 400 sats/share
                 const totalCost = shares * priceSats;
                 return (
-                  <div key={i} className="ob-row">
+                  <div 
+                    key={i} 
+                    className="ob-row ob-row-clickable"
+                    onClick={() => handleOfferClick('yes', o.price_cents, shares)}
+                    title={`Click to buy ${shares} NO shares at ${100 - o.price_cents}%`}
+                  >
                     <span className="ob-price">{formatSats(priceSats)}</span>
                     <span className="ob-shares">{shares}</span>
                     <span className="ob-total">{formatSats(totalCost)}</span>
@@ -1661,7 +1700,12 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
                 const priceSats = (100 - o.price_cents) * 10; // NO price = 100 - YES price
                 const totalCost = shares * priceSats;
                 return (
-                  <div key={i} className="ob-row">
+                  <div 
+                    key={i} 
+                    className="ob-row ob-row-clickable"
+                    onClick={() => handleOfferClick('no', o.price_cents, shares)}
+                    title={`Click to buy ${shares} YES shares at ${o.price_cents}%`}
+                  >
                     <span className="ob-price">{formatSats(priceSats)}</span>
                     <span className="ob-shares">{shares}</span>
                     <span className="ob-total">{formatSats(totalCost)}</span>
