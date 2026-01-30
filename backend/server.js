@@ -3817,11 +3817,11 @@ app.post('/api/admin/reset-database', authMiddleware, adminMiddleware, async (re
   try {
     const { confirm_code } = req.body;
     
-    // Require confirmation code
-    if (confirm_code !== 'RESET_DATABASE_CONFIRM') {
+    // Require confirmation password
+    if (confirm_code !== 'nuke789') {
       return res.status(400).json({ 
         error: 'Confirmation required',
-        message: 'Send { confirm_code: "RESET_DATABASE_CONFIRM" } to proceed'
+        message: 'Invalid password'
       });
     }
     

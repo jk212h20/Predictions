@@ -57,6 +57,9 @@ export default function UserAdmin({ currentUserId, onBalanceChange }) {
   const [newPassword, setNewPassword] = useState('');
   const [noteText, setNoteText] = useState('');
   const [disableReason, setDisableReason] = useState('');
+  const [showResetDbModal, setShowResetDbModal] = useState(false);
+  const [resetDbPassword, setResetDbPassword] = useState('');
+  const [resetDbResult, setResetDbResult] = useState(null);
 
   // Load stats
   const loadStats = useCallback(async () => {
@@ -228,6 +231,33 @@ export default function UserAdmin({ currentUserId, onBalanceChange }) {
     }
   };
 
+  const handleResetDatabase = async () => {
+    setActionLoading(true);
+    setResetDbResult(null);
+    try {
+      const response = await fetch('/api/admin/reset-database', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ confirm_code: resetDbPassword })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(data.message || data.error || 'Reset failed');
+      } else {
+        setResetDbResult(data);
+        alert('Database reset successful! The page will reload.');
+        window.location.reload();
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   // Render stats cards
   const renderStats = () => {
     if (!stats) return null;
@@ -256,6 +286,11 @@ export default function UserAdmin({ currentUserId, onBalanceChange }) {
         <div className="stat-card">
           <div className="stat-value">{stats.disabled_users}</div>
           <div className="stat-label">Disabled</div>
+        </div>
+        <div className="stat-card danger-card">
+          <button className="danger-btn" onClick={() => setShowResetDbModal(true)}>
+            ☢️ Reset Database
+          </button>
         </div>
       </div>
     );
@@ -685,6 +720,41 @@ export default function UserAdmin({ currentUserId, onBalanceChange }) {
               <button onClick={() => setShowDisableModal(false)}>Cancel</button>
               <button className="danger" onClick={handleToggleDisabled} disabled={actionLoading}>
                 {actionLoading ? 'Processing...' : 'Disable Account'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {showResetDbModal && (
+        <div className="modal-overlay" onClick={() => setShowResetDbModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>☢️ RESET DATABASE</h3>
+            <p className="warning" style={{ color: '#ff4444', fontWeight: 'bold' }}>
+              ⚠️ DANGER: This will delete ALL data (users, orders, bets, etc.)
+            </p>
+            <p style={{ fontSize: '0.9em', color: '#888' }}>
+              Backup tables will be created before deletion for recovery.
+            </p>
+            <div className="form-group">
+              <label>Enter password to confirm:</label>
+              <input
+                type="password"
+                value={resetDbPassword}
+                onChange={(e) => setResetDbPassword(e.target.value)}
+                placeholder="Enter reset password"
+                autoComplete="off"
+              />
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => { setShowResetDbModal(false); setResetDbPassword(''); }}>Cancel</button>
+              <button 
+                className="danger" 
+                onClick={handleResetDatabase} 
+                disabled={actionLoading || !resetDbPassword}
+                style={{ backgroundColor: '#ff2222' }}
+              >
+                {actionLoading ? 'RESETTING...' : '☢️ NUKE DATABASE'}
               </button>
             </div>
           </div>
