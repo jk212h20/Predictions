@@ -824,34 +824,28 @@ const AUTO_WITHDRAW_LIMIT = 100000; // 100k sats auto-approve limit
 
 // Get global withdrawal settings (admin can pause auto-withdrawals)
 function getWithdrawalSettings() {
-  try {
-    // Ensure table exists
+  // Ensure table exists (in case database.js schema wasn't loaded)
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS withdrawal_settings (
+      id TEXT PRIMARY KEY,
+      auto_withdraw_paused INTEGER DEFAULT 0,
+      pause_reason TEXT,
+      paused_by TEXT,
+      paused_at TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `).run();
+  
+  let settings = db.prepare('SELECT * FROM withdrawal_settings WHERE id = ?').get('default');
+  if (!settings) {
+    // Create default settings
     db.prepare(`
-      CREATE TABLE IF NOT EXISTS withdrawal_settings (
-        id TEXT PRIMARY KEY,
-        auto_withdraw_paused INTEGER DEFAULT 0,
-        pause_reason TEXT,
-        paused_by TEXT,
-        paused_at TEXT,
-        updated_at TEXT DEFAULT (datetime('now'))
-      )
+      INSERT INTO withdrawal_settings (id, auto_withdraw_paused, pause_reason)
+      VALUES ('default', 0, NULL)
     `).run();
-    
-    let settings = db.prepare('SELECT * FROM withdrawal_settings WHERE id = ?').get('default');
-    if (!settings) {
-      // Create default settings
-      db.prepare(`
-        INSERT INTO withdrawal_settings (id, auto_withdraw_paused, pause_reason)
-        VALUES ('default', 0, NULL)
-      `).run();
-      settings = { id: 'default', auto_withdraw_paused: 0, pause_reason: null };
-    }
-    return settings;
-  } catch (err) {
-    console.error('getWithdrawalSettings error:', err);
-    // Return default values even if DB fails
-    return { id: 'default', auto_withdraw_paused: 0, pause_reason: null };
+    settings = db.prepare('SELECT * FROM withdrawal_settings WHERE id = ?').get('default');
   }
+  return settings;
 }
 
 app.post('/api/wallet/withdraw', authMiddleware, async (req, res) => {
@@ -3872,7 +3866,7 @@ app.post('/api/admin/reset-database', authMiddleware, adminMiddleware, async (re
       'bot_exposure', 'bot_log', 'bot_curve_shapes', 'bot_market_weights',
       'bot_pullback_thresholds', 'pending_withdrawals', 'login_history',
       'admin_audit_log', 'onchain_deposits', 'onchain_withdrawals',
-      'lnurl_auth_challenges'
+      'lnurl_auth_challenges', 'withdrawal_settings'
     ];
     
     const backedUp = [];
