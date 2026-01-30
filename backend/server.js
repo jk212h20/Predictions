@@ -4110,11 +4110,28 @@ app.post('/api/admin/restore-database', authMiddleware, adminMiddleware, (req, r
       }
     }
     
+    // After restore, verify that essential tables exist and have data
+    // If grandmasters is empty but markets has data, something went wrong
+    const gmCount = db.prepare('SELECT COUNT(*) as c FROM grandmasters').get()?.c || 0;
+    const marketCount = db.prepare('SELECT COUNT(*) as c FROM markets').get()?.c || 0;
+    
+    // If markets exist but no grandmasters, we need to reseed grandmasters
+    if (marketCount > 0 && gmCount === 0) {
+      console.log('Markets restored but grandmasters missing - reseeding players...');
+      try {
+        seedPlayers();
+      } catch (e) {
+        errors.push({ table: 'grandmasters', error: 'reseed failed: ' + e.message });
+      }
+    }
+    
     res.json({
       success: true,
       message: 'Database restored from backup',
       timestamp,
       restored,
+      grandmasters_count: gmCount,
+      markets_count: marketCount,
       errors: errors.length > 0 ? errors : undefined
     });
   } catch (err) {
