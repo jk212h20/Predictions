@@ -2472,21 +2472,26 @@ function deployAllOrders(userId) {
     const scaledAmount = Math.floor(order.amount * scaleFactor);
     if (scaledAmount < 100) continue; // Skip orders below minimum
     
-    // Use placeOrderWithMatching to execute matches immediately
-    const result = placeOrderWithMatching(userId, order.marketId, 'no', order.price, scaledAmount);
+    const actualCost = Math.ceil(scaledAmount * (100 - order.price) / 100);
     
-    if (!result.success) {
-      continue; // Skip if failed (likely insufficient balance)
+    // Check if we have enough balance left
+    const currentUser = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
+    if (currentUser.balance_sats < actualCost) {
+      continue; // Skip if insufficient balance
     }
     
-    results.totalCost += result.cost;
+    // Place the order
+    const orderId = uuidv4();
+    db.prepare(`
+      INSERT INTO orders (id, user_id, market_id, side, price_cents, amount_sats, filled_sats, status)
+      VALUES (?, ?, ?, 'no', ?, ?, 0, 'open')
+    `).run(orderId, userId, order.marketId, order.price, scaledAmount);
+    
+    // Deduct cost
+    db.prepare('UPDATE users SET balance_sats = balance_sats - ? WHERE id = ?').run(actualCost, userId);
+    
+    results.totalCost += actualCost;
     results.totalOrders++;
-    
-    // Track matches
-    if (result.matchedBets && result.matchedBets.length > 0) {
-      results.totalMatched = (results.totalMatched || 0) + result.filled;
-      results.matchedBets = (results.matchedBets || []).concat(result.matchedBets);
-    }
     
     // Track per-market counts
     if (!marketOrderCounts[order.marketId]) {
