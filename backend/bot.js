@@ -2652,10 +2652,9 @@ function atomicPullback(filledAmount, marketId) {
  */
 function calculatePotentialMatch(marketId, noPrice, amount) {
   // A NO order at price P matches YES orders where YES price >= (100 - P)
-  // But actually in our system, NO@P matches YES orders with price >= P
-  // Because NO@40 means "I'll take NO at 40% YES price" 
-  // and matches with YES@40+ orders
-  const minYesPrice = noPrice;
+  // Example: NO@60 means "I want NO at 60% YES prob" → costs 40 sats
+  // Matches YES orders at (100-60)=40% or higher
+  const minYesPrice = 100 - noPrice;
   
   // Find existing YES orders that would match
   const matchingYesOrders = db.prepare(`
@@ -2777,10 +2776,15 @@ function calculateAutoMatchesForDeployment(marketPreviews) {
       let orderMatchCost = 0;
       const matchingOrderDetails = [];
       
-      // Find YES orders that would match (YES price >= NO price)
+      // Find YES orders that would match
+      // NO order at price P matches YES orders where YES_price >= (100 - P)
+      // Because NO@60 means "I want NO at 60% YES prob" → costs 40 sats
+      // and matches YES@40+ (who pay 40+ sats for YES)
+      const minYesPriceToMatch = 100 - noPrice;
+      
       for (const yesOrder of yesOrders) {
         if (remainingAmount <= 0) break;
-        if (yesOrder.price_cents < noPrice) continue; // Won't match
+        if (yesOrder.price_cents < minYesPriceToMatch) continue; // Won't match
         
         // Get CURRENT available (may have been consumed by previous proposed orders)
         const available = availableByYesOrder.get(yesOrder.id);
