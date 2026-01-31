@@ -128,6 +128,11 @@ function placeOrder(db, userId, marketId, side, priceSats, amountSats) {
     const minMatchPrice = SATS_PER_SHARE - priceSats;
     const matchingOrders = matchQuery.all(marketId, minMatchPrice);
     
+    // DEBUG: Log matching attempt
+    console.log(`[MATCHING] User ${userId.slice(0,8)} placing ${side.toUpperCase()}@${priceSats} for ${shares} shares`);
+    console.log(`[MATCHING] Looking for ${oppositeSide.toUpperCase()} orders where price >= ${minMatchPrice}`);
+    console.log(`[MATCHING] Found ${matchingOrders.length} potential matches:`, matchingOrders.map(o => `${o.id.slice(0,8)}:${o.side}@${o.price_sats}`));
+    
     let remainingShares = shares;
     let actualMatchCost = 0;  // Track actual cost at trade prices (for price improvement)
     const betsCreated = [];
