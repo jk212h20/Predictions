@@ -1075,7 +1075,7 @@ app.get('/api/grandmasters', (req, res) => {
     
     return {
       ...gm,
-      attendance_yes_price: bestYes?.price ? (100 - bestYes.price) : null,
+      attendance_yes_price: bestYes?.price ? (1000 - bestYes.price) : null,
       attendance_no_price: bestNo?.price || null,
     };
   });
@@ -1142,21 +1142,21 @@ app.get('/api/markets/:id', (req, res) => {
  * 
  * SHARE MODEL:
  * - 1 share = 1000 sats payout if the prediction is correct
- * - price_sats represents probability (1-99 = 1%-99%)
- * - YES share at 60% costs 600 sats, pays 1000 sats if YES wins
- * - NO share at 40% costs 400 sats, pays 1000 sats if NO wins
- * - Complementary orders (YES@60 + NO@40 = 100%) match perfectly
+ * - price_sats represents cost in sats (1-999)
+ * - YES share at 600 costs 600 sats, pays 1000 sats if YES wins
+ * - NO share at 400 costs 400 sats, pays 1000 sats if NO wins
+ * - Complementary orders (YES@600 + NO@400 = 1000) match perfectly
  * 
  * MATCHING LOGIC:
- * - YES order at price Y matches with NO orders where NO_price >= (100 - Y)
- * - NO order at price N matches with YES orders where YES_price >= (100 - N)
+ * - YES order at price Y matches with NO orders where NO_price >= (1000 - Y)
+ * - NO order at price N matches with YES orders where YES_price >= (1000 - N)
  * - Trade executes at the RESTING order's price (price-time priority)
  * - Best prices matched first (highest NO for YES takers, lowest YES for NO takers)
  * 
  * EXAMPLE:
- * - Resting: NO @ 45% (they paid 450 sats/share)
- * - Incoming: YES @ 60% (willing to pay up to 600 sats/share)
- * - Match! Trade at 55% YES / 45% NO (resting order's terms)
+ * - Resting: NO @ 450 (they paid 450 sats/share)
+ * - Incoming: YES @ 600 (willing to pay up to 600 sats/share)
+ * - Match! Trade at 550 YES / 450 NO (resting order's terms)
  * - YES buyer pays 550 sats/share (better than their 600 limit)
  * 
  * CONCURRENCY:
