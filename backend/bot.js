@@ -2504,7 +2504,7 @@ function deployMarketOrders(marketId, userId) {
     if (point.amount < 100) continue; // Min order size
     
     // Bot places NO orders (offering to take NO side at this YES price)
-    // Cost for NO = (100 - price) * amount / 100
+    // Cost for NO = (1000 - price) * amount / 1000
     const cost = Math.ceil(point.amount * (1000 - point.price) / 1000);
     
     // Check if user has enough balance
@@ -3388,7 +3388,7 @@ function getDeploymentPreview(userId) {
     for (const point of effectiveCurve) {
       if (point.amount < 100) continue;
       
-      // Cost for NO side = (100 - price) * amount / 100
+      // Cost for NO side = (1000 - price) * amount / 1000
       const cost = Math.ceil(point.amount * (1000 - point.price) / 1000);
       
       orders.push({
