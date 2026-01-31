@@ -1507,7 +1507,7 @@ function deployAllOrdersTwoSided(userId) {
   const { adjustedOrders: adjustedNoOrders, matchResults: noMatchResults } = executeAutoMatchesForOrders(userId, scaledNoOrders);
   
   // Step 9: Execute auto-matches for YES orders (using similar logic but for YES side)
-  // YES orders match existing NO orders where NO_price <= (100 - YES_price)
+  // YES orders match existing NO orders where NO_price <= (10000 - YES_price)
   const yesMatchResults = { totalMatched: 0, totalMatchCost: 0, betsCreated: [], ordersFullyMatched: 0 };
   const adjustedYesOrders = [];
   
@@ -3084,7 +3084,7 @@ function atomicPullback(filledAmount, marketId) {
 /**
  * Calculate potential auto-matches for a proposed NO order
  * When placing a NO order at price P, it will match with existing YES orders 
- * where YES price >= (100 - P)
+ * where YES price >= (10000 - P)
  * 
  * @param {string} marketId - Market to check
  * @param {number} noPrice - Price of the NO order (this is the YES price the NO is offering)
@@ -3092,7 +3092,7 @@ function atomicPullback(filledAmount, marketId) {
  * @returns {object} Match details
  */
 function calculatePotentialMatch(marketId, noPrice, amount) {
-  // A NO order at price P matches YES orders where YES price >= (100 - P)
+  // A NO order at price P matches YES orders where YES price >= (10000 - P)
   // Example: NO@60 means "I want NO at 60% YES prob" → costs 40 sats
   // Matches YES orders at (100-60)=40% or higher
   const minYesPrice = 1000 - noPrice;
@@ -3129,7 +3129,7 @@ function calculatePotentialMatch(marketId, noPrice, amount) {
     const matchAmount = Math.min(remainingAmount, available);
     
     // Cost to the NO side for this match
-    // NO pays (100 - trade_price)% where trade_price is the resting order's price
+    // NO pays (1000 - trade_price)% where trade_price is the resting order's price
     const tradePrice = yesOrder.price_sats;
     const matchCost = Math.ceil(matchAmount * (1000 - tradePrice) / 1000);
     
@@ -3218,7 +3218,7 @@ function calculateAutoMatchesForDeployment(marketPreviews) {
       const matchingOrderDetails = [];
       
       // Find YES orders that would match
-      // NO order at price P matches YES orders where YES_price >= (100 - P)
+      // NO order at price P matches YES orders where YES_price >= (10000 - P)
       // Because NO@60 means "I want NO at 60% YES prob" → costs 40 sats
       // and matches YES@40+ (who pay 40+ sats for YES)
       const minYesPriceToMatch = 1000 - noPrice;
