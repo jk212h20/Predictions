@@ -1541,7 +1541,7 @@ function deployAllOrdersTwoSided(userId) {
     for (const proposedOrder of sortedOrders) {
       const yesPrice = proposedOrder.price;
       let remainingAmount = proposedOrder.amount;
-      const maxNoPriceToMatch = 100 - yesPrice; // NO orders at this price or lower match
+      const maxNoPriceToMatch = 1000 - yesPrice; // NO orders at this price or lower match
       
       for (const noOrder of noOrders) {
         if (remainingAmount <= 0) break;
@@ -1552,7 +1552,7 @@ function deployAllOrdersTwoSided(userId) {
         
         const matchAmount = Math.min(remainingAmount, noData.available);
         const tradePrice = noOrder.price_sats;
-        const matchCost = Math.ceil(matchAmount * (100 - tradePrice) / 1000); // YES pays 100 - NO_price
+        const matchCost = Math.ceil(matchAmount * (1000 - tradePrice) / 1000); // YES pays 1000 - NO_price
         
         const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
         if (user.balance_sats < matchCost) continue;
@@ -1841,7 +1841,7 @@ function getDeploymentPreviewTwoSided(userId) {
         if (available <= 0) continue;
         
         const matchAmount = Math.min(remainingAmount, available);
-        const matchCost = Math.ceil(matchAmount * (100 - noOrder.price_sats) / 1000);
+        const matchCost = Math.ceil(matchAmount * (1000 - noOrder.price_sats) / 1000);
         
         availableByNo.set(noOrder.id, available - matchAmount);
         orderMatchAmount += matchAmount;
@@ -2603,7 +2603,7 @@ function executeAutoMatchesForOrders(userId, allOrders) {
         const tradePrice = yesOrder.price_sats;
         
         // Calculate cost for NO side
-        const matchCost = Math.ceil(matchAmount * (100 - tradePrice) / 1000);
+        const matchCost = Math.ceil(matchAmount * (1000 - tradePrice) / 1000);
         
         // Check user balance
         const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(userId);
@@ -3131,7 +3131,7 @@ function calculatePotentialMatch(marketId, noPrice, amount) {
     // Cost to the NO side for this match
     // NO pays (100 - trade_price)% where trade_price is the resting order's price
     const tradePrice = yesOrder.price_sats;
-    const matchCost = Math.ceil(matchAmount * (100 - tradePrice) / 1000);
+    const matchCost = Math.ceil(matchAmount * (1000 - tradePrice) / 1000);
     
     totalMatchAmount += matchAmount;
     totalMatchCost += matchCost;
@@ -3235,7 +3235,7 @@ function calculateAutoMatchesForDeployment(marketPreviews) {
         
         // Calculate cost (NO pays 100 - trade_price where trade_price = YES order's price)
         const tradePrice = yesOrder.price_sats;
-        const matchCost = Math.ceil(matchAmount * (100 - tradePrice) / 1000);
+        const matchCost = Math.ceil(matchAmount * (1000 - tradePrice) / 1000);
         
         // "Consume" this amount from the YES order (for subsequent proposed orders)
         availableByYesOrder.set(yesOrder.id, available - matchAmount);
