@@ -1519,21 +1519,38 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
 
   // Handle clicking on an order book offer to fill in the trade form
   // offerSide: the side of the existing offer ('yes' or 'no')
-  // offerPriceSats: the YES price in sats (10-990) from the order
+  // offerPriceSats: the price_sats value from the order (what THAT side pays)
   // availableShares: number of shares available in the order
   const handleOfferClick = (offerSide, offerPriceSats, availableShares) => {
     const newSide = offerSide === 'yes' ? 'no' : 'yes';
     // Take the opposite side of the offer
     setSide(newSide);
+    
+    // Calculate the price for our order that will match the resting order
+    // Matching condition: YES_price + NO_price >= 1000
+    // 
+    // If clicking YES offer (price_sats = what YES pays):
+    //   We're placing NO. To match, our NO_price can be anything where YES_price + NO_price >= 1000
+    //   Minimum NO_price to match = 1000 - YES_price. We use the exact complement to match at their price.
+    //   Our form shows the YES probability, so set it to offerPriceSats (the YES price)
+    //
+    // If clicking NO offer (price_sats = what NO pays):
+    //   We're placing YES. To match, our YES_price + their NO_price >= 1000
+    //   Minimum YES_price to match = 1000 - NO_price
+    //   Our form shows the YES probability, so set it to (1000 - offerPriceSats)
+    const yesPriceSats = offerSide === 'yes' 
+      ? offerPriceSats           // Clicking YES offer: use their YES price directly
+      : (1000 - offerPriceSats); // Clicking NO offer: convert NO price to complementary YES price
+    
     // Convert sats (10-990) to percentage (1-99) for the slider
-    const pricePercent = Math.round(offerPriceSats / 10);
+    const pricePercent = Math.round(yesPriceSats / 10);
     setPrice(pricePercent);
     // Set shares to match what's available
     setShares(availableShares);
     
     // Show toast notification
-    // Cost per share: YES pays offerPriceSats, NO pays (1000 - offerPriceSats)
-    const costPerShare = newSide === 'yes' ? offerPriceSats : (1000 - offerPriceSats);
+    // Cost per share: YES pays yesPriceSats, NO pays (1000 - yesPriceSats)
+    const costPerShare = newSide === 'yes' ? yesPriceSats : (1000 - yesPriceSats);
     const totalCost = Math.ceil(availableShares * SATS_PER_SHARE * costPerShare / 1000);
     setToast({
       message: `✓ Form filled: ${availableShares} ${newSide.toUpperCase()} @ ${pricePercent}%`,
