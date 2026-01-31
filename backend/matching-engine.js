@@ -151,8 +151,18 @@ function placeOrder(db, userId, marketId, side, priceSats, amountSats) {
       const matchedShares = Math.min(remainingShares, restingRemainingShares);
       const matchedSats = matchedShares * SATS_PER_SHARE;
       
-      // Trade price is the resting order's price (maker advantage)
-      const tradePriceSats = restingOrder.price_sats;
+      // Trade price stored in bet should ALWAYS be the YES price
+      // (what the YES side pays per share)
+      let betPriceSats;
+      if (side === 'yes') {
+        // Incoming is YES, resting is NO
+        // YES pays (1000 - NO_price), so YES_price = 1000 - restingOrder.price_sats
+        betPriceSats = SATS_PER_SHARE - restingOrder.price_sats;
+      } else {
+        // Incoming is NO, resting is YES
+        // YES price is the resting order's price
+        betPriceSats = restingOrder.price_sats;
+      }
       
       // Determine who is YES and who is NO
       let yesUserId, noUserId;
@@ -179,12 +189,12 @@ function placeOrder(db, userId, marketId, side, priceSats, amountSats) {
       db.prepare(`
         INSERT INTO bets (id, market_id, yes_user_id, no_user_id, yes_order_id, no_order_id, amount_sats, price_sats, status, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', datetime('now'))
-      `).run(betId, marketId, yesUserId, noUserId, yesOrderId, noOrderId, matchedSats, tradePriceSats);
+      `).run(betId, marketId, yesUserId, noUserId, yesOrderId, noOrderId, matchedSats, betPriceSats);
       
       betsCreated.push({
         betId,
         shares: matchedShares,
-        priceSats: tradePriceSats,
+        priceSats: betPriceSats,
         counterpartyId: restingOrder.user_id
       });
       
@@ -194,10 +204,10 @@ function placeOrder(db, userId, marketId, side, priceSats, amountSats) {
       db.prepare('UPDATE orders SET filled_sats = ?, status = ?, updated_at = datetime(\'now\') WHERE id = ?')
         .run(newFilledSats, newStatus, restingOrder.id);
       
-      // Calculate actual cost for this match at trade price
-      // If YES taker: pays (1000 - restingNO_price) per share
-      // If NO taker: pays (1000 - restingYES_price) per share  
-      const actualCostPerShare = SATS_PER_SHARE - tradePriceSats;
+      // Calculate actual cost for this match
+      // If YES taker: pays betPriceSats per share (the YES price)
+      // If NO taker: pays (1000 - betPriceSats) per share  
+      const actualCostPerShare = side === 'yes' ? betPriceSats : (SATS_PER_SHARE - betPriceSats);
       actualMatchCost += matchedShares * actualCostPerShare;
       
       remainingShares -= matchedShares;
