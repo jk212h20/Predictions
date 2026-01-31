@@ -1527,13 +1527,17 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
   // Calculate best prices from order book
   const bestYesPrice = market?.orderBook?.yes?.[0]?.price_sats 
     ? Math.round(market.orderBook.yes[0].price_sats / 10) 
-    : null;
+    : 50;
   const bestNoPrice = market?.orderBook?.no?.[0]?.price_sats 
     ? Math.round((1000 - market.orderBook.no[0].price_sats) / 10) 
-    : null;
+    : 50;
   
   // Calculate total volume
   const totalVolume = market?.recentTrades?.reduce((s, t) => s + t.amount_sats, 0) || 0;
+  
+  // Get current market price (average of best yes and 100-best no, or 50)
+  const currentPrice = bestYesPrice || 50;
+  const priceChange = 0; // Would need historical data
 
   // Handle clicking on an order book offer to fill in the trade form
   // offerSide: the side of the existing offer ('yes' or 'no')
