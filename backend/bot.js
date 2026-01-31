@@ -1243,7 +1243,7 @@ function getEffectiveCurveTwoSided(marketId, totalBudget = null) {
     yesCost += Math.ceil(order.amount * order.price / 1000);
   }
   for (const order of noOrders) {
-    noCost += Math.ceil(order.amount * (100 - order.price) / 1000);
+    noCost += Math.ceil(order.amount * (1000 - order.price) / 1000);
   }
   
   return {
@@ -1411,7 +1411,7 @@ function deployAllOrdersTwoSided(userId) {
     const remaining = order.amount_sats - order.filled_sats;
     const refund = order.side === 'yes'
       ? Math.ceil(remaining * order.price_sats / 1000)
-      : Math.ceil(remaining * (100 - order.price_sats) / 1000);
+      : Math.ceil(remaining * (1000 - order.price_sats) / 1000);
     totalRefund += refund;
   }
   
@@ -1479,7 +1479,7 @@ function deployAllOrdersTwoSided(userId) {
     
     for (const order of curves.noOrders) {
       if (order.amount < 100) continue;
-      const cost = Math.ceil(order.amount * (100 - order.price) / 1000);
+      const cost = Math.ceil(order.amount * (1000 - order.price) / 1000);
       totalTheoreticCost += cost;
       allNoOrders.push({ marketId: market.id, ...order, cost });
     }
@@ -1500,7 +1500,7 @@ function deployAllOrdersTwoSided(userId) {
   // Apply scaling to NO orders  
   const scaledNoOrders = allNoOrders.map(order => {
     const scaledAmount = Math.floor(order.amount * scaleFactor);
-    return { ...order, amount: scaledAmount, cost: Math.ceil(scaledAmount * (100 - order.price) / 1000) };
+    return { ...order, amount: scaledAmount, cost: Math.ceil(scaledAmount * (1000 - order.price) / 1000) };
   }).filter(o => o.amount >= 100);
   
   // Step 8: Execute auto-matches for NO orders (they match existing YES orders)
@@ -1561,7 +1561,7 @@ function deployAllOrdersTwoSided(userId) {
         db.prepare(`
           INSERT INTO bets (id, market_id, yes_user_id, no_user_id, price_sats, amount_sats)
           VALUES (?, ?, ?, ?, ?, ?)
-        `).run(betId, marketId, userId, noOrder.user_id, 100 - tradePrice, matchAmount);
+        `).run(betId, marketId, userId, noOrder.user_id, 1000 - tradePrice, matchAmount);
         
         const newFilled = noOrder.filled_sats + matchAmount;
         const newStatus = newFilled >= noOrder.amount_sats ? 'filled' : 'partial';
@@ -1575,7 +1575,7 @@ function deployAllOrdersTwoSided(userId) {
         
         yesMatchResults.totalMatched += matchAmount;
         yesMatchResults.totalMatchCost += matchCost;
-        yesMatchResults.betsCreated.push({ betId, marketId, amount: matchAmount, price: 100 - tradePrice });
+        yesMatchResults.betsCreated.push({ betId, marketId, amount: matchAmount, price: 1000 - tradePrice });
         remainingAmount -= matchAmount;
       }
       
@@ -1707,7 +1707,7 @@ function getDeploymentPreviewTwoSided(userId) {
     const remaining = order.amount_sats - order.filled_sats;
     const refund = order.side === 'yes'
       ? Math.ceil(remaining * order.price_sats / 1000)
-      : Math.ceil(remaining * (100 - order.price_sats) / 1000);
+      : Math.ceil(remaining * (1000 - order.price_sats) / 1000);
     totalRefund += refund;
   }
   
@@ -1762,7 +1762,7 @@ function getDeploymentPreviewTwoSided(userId) {
     }));
     const noOrdersWithCost = curves.noOrders.map(o => ({
       ...o,
-      cost: Math.ceil(o.amount * (100 - o.price) / 1000)
+      cost: Math.ceil(o.amount * (1000 - o.price) / 1000)
     }));
     
     const marketYesCost = yesOrdersWithCost.reduce((sum, o) => sum + o.cost, 0);
@@ -1828,7 +1828,7 @@ function getDeploymentPreviewTwoSided(userId) {
     
     for (const yesOrder of market.yesOrders) {
       const yesPrice = yesOrder.price;
-      const maxNoPriceToMatch = 100 - yesPrice;
+      const maxNoPriceToMatch = 1000 - yesPrice;
       let remainingAmount = yesOrder.amount;
       let orderMatchAmount = 0, orderMatchCost = 0;
       const matchDetails = [];
@@ -2358,7 +2358,7 @@ function placeOrderWithMatching(userId, marketId, side, priceSats, amountSats) {
       .run(newFilled, newStatus, currentMatch.id);
     
     remainingAmount -= matchAmount;
-    matchedBets.push({ betId, amount: matchAmount, price: 100 - tradePrice, counterpartyId: currentMatch.user_id });
+    matchedBets.push({ betId, amount: matchAmount, price: 1000 - tradePrice, counterpartyId: currentMatch.user_id });
   }
   
   // Create order for remaining amount
@@ -2479,7 +2479,7 @@ function deployMarketOrders(marketId, userId) {
     const remaining = order.amount_sats - order.filled_sats;
     const refund = order.side === 'yes'
       ? Math.ceil(remaining * order.price_sats / 1000)
-      : Math.ceil(remaining * (100 - order.price_sats) / 1000);
+      : Math.ceil(remaining * (1000 - order.price_sats) / 1000);
     refundAmount += refund;
   }
   
@@ -2505,7 +2505,7 @@ function deployMarketOrders(marketId, userId) {
     
     // Bot places NO orders (offering to take NO side at this YES price)
     // Cost for NO = (100 - price) * amount / 100
-    const cost = Math.ceil(point.amount * (100 - point.price) / 1000);
+    const cost = Math.ceil(point.amount * (1000 - point.price) / 1000);
     
     // Check if user has enough balance
     if (totalCost + cost > updatedUser.balance_sats) {
@@ -2589,7 +2589,7 @@ function executeAutoMatchesForOrders(userId, allOrders) {
     for (const proposedOrder of sortedOrders) {
       const noPrice = proposedOrder.price;
       let remainingAmount = proposedOrder.amount;
-      const minYesPriceToMatch = 100 - noPrice;
+      const minYesPriceToMatch = 1000 - noPrice;
       
       // Find and execute matches
       for (const yesOrder of yesOrders) {
@@ -2614,7 +2614,7 @@ function executeAutoMatchesForOrders(userId, allOrders) {
         db.prepare(`
           INSERT INTO bets (id, market_id, yes_user_id, no_user_id, price_sats, amount_sats)
           VALUES (?, ?, ?, ?, ?, ?)
-        `).run(betId, marketId, yesOrder.user_id, userId, 100 - tradePrice, matchAmount);
+        `).run(betId, marketId, yesOrder.user_id, userId, 1000 - tradePrice, matchAmount);
         
         // Update the YES order's filled amount
         const newFilled = yesOrder.filled_sats + matchAmount;
@@ -2635,7 +2635,7 @@ function executeAutoMatchesForOrders(userId, allOrders) {
           betId,
           marketId,
           amount: matchAmount,
-          price: 100 - tradePrice,
+          price: 1000 - tradePrice,
           yesOrderId: yesOrder.id
         });
         
@@ -2647,7 +2647,7 @@ function executeAutoMatchesForOrders(userId, allOrders) {
         adjustedOrders.push({
           ...proposedOrder,
           amount: remainingAmount,
-          cost: Math.ceil(remainingAmount * (100 - proposedOrder.price) / 1000),
+          cost: Math.ceil(remainingAmount * (1000 - proposedOrder.price) / 1000),
           originalAmount: proposedOrder.amount,
           matchedAmount: proposedOrder.amount - remainingAmount
         });
@@ -2696,7 +2696,7 @@ function deployAllOrders(userId) {
     const remaining = order.amount_sats - order.filled_sats;
     const refund = order.side === 'yes'
       ? Math.ceil(remaining * order.price_sats / 1000)
-      : Math.ceil(remaining * (100 - order.price_sats) / 1000);
+      : Math.ceil(remaining * (1000 - order.price_sats) / 1000);
     totalRefund += refund;
   }
   
@@ -2758,7 +2758,7 @@ function deployAllOrders(userId) {
     for (const point of effectiveCurve) {
       if (point.amount < 100) continue;
       
-      const cost = Math.ceil(point.amount * (100 - point.price) / 1000);
+      const cost = Math.ceil(point.amount * (1000 - point.price) / 1000);
       totalTheoreticCost += cost;
       allOrders.push({
         marketId: market.id,
@@ -2782,7 +2782,7 @@ function deployAllOrders(userId) {
     return {
       ...order,
       amount: scaledAmount,
-      cost: Math.ceil(scaledAmount * (100 - order.price) / 1000)
+      cost: Math.ceil(scaledAmount * (1000 - order.price) / 1000)
     };
   }).filter(order => order.amount >= 100);
   
@@ -2883,7 +2883,7 @@ function withdrawAllOrders(userId) {
     const remaining = order.amount_sats - order.filled_sats;
     const refund = order.side === 'yes'
       ? Math.ceil(remaining * order.price_sats / 1000)
-      : Math.ceil(remaining * (100 - order.price_sats) / 1000);
+      : Math.ceil(remaining * (1000 - order.price_sats) / 1000);
     totalRefund += refund;
   }
   
@@ -2921,7 +2921,7 @@ function cancelAllUserOrders(userId) {
     const remaining = order.amount_sats - order.filled_sats;
     const refund = order.side === 'yes'
       ? Math.ceil(remaining * order.price_sats / 1000)
-      : Math.ceil(remaining * (100 - order.price_sats) / 1000);
+      : Math.ceil(remaining * (1000 - order.price_sats) / 1000);
     totalRefund += refund;
   }
   
@@ -2995,7 +2995,7 @@ function atomicPullback(filledAmount, marketId) {
         
         // Refund the full remaining cost
         const refund = order.side === 'no'
-          ? Math.ceil(remaining * (100 - order.price_sats) / 1000)
+          ? Math.ceil(remaining * (1000 - order.price_sats) / 1000)
           : Math.ceil(remaining * order.price_sats / 1000);
         
         totalRefund += refund;
@@ -3036,7 +3036,7 @@ function atomicPullback(filledAmount, marketId) {
         
         // Refund the reduction cost
         const refund = order.side === 'no'
-          ? Math.ceil(reductionSats * (100 - order.price_sats) / 1000)
+          ? Math.ceil(reductionSats * (1000 - order.price_sats) / 1000)
           : Math.ceil(reductionSats * order.price_sats / 1000);
         
         totalRefund += refund;
@@ -3095,7 +3095,7 @@ function calculatePotentialMatch(marketId, noPrice, amount) {
   // A NO order at price P matches YES orders where YES price >= (100 - P)
   // Example: NO@60 means "I want NO at 60% YES prob" → costs 40 sats
   // Matches YES orders at (100-60)=40% or higher
-  const minYesPrice = 100 - noPrice;
+  const minYesPrice = 1000 - noPrice;
   
   // Find existing YES orders that would match
   const matchingYesOrders = db.prepare(`
@@ -3221,7 +3221,7 @@ function calculateAutoMatchesForDeployment(marketPreviews) {
       // NO order at price P matches YES orders where YES_price >= (100 - P)
       // Because NO@60 means "I want NO at 60% YES prob" → costs 40 sats
       // and matches YES@40+ (who pay 40+ sats for YES)
-      const minYesPriceToMatch = 100 - noPrice;
+      const minYesPriceToMatch = 1000 - noPrice;
       
       for (const yesOrder of yesOrders) {
         if (remainingAmount <= 0) break;
@@ -3338,7 +3338,7 @@ function getDeploymentPreview(userId) {
     const remaining = order.amount_sats - order.filled_sats;
     const refund = order.side === 'yes'
       ? Math.ceil(remaining * order.price_sats / 1000)
-      : Math.ceil(remaining * (100 - order.price_sats) / 1000);
+      : Math.ceil(remaining * (1000 - order.price_sats) / 1000);
     totalRefund += refund;
   }
   
@@ -3389,7 +3389,7 @@ function getDeploymentPreview(userId) {
       if (point.amount < 100) continue;
       
       // Cost for NO side = (100 - price) * amount / 100
-      const cost = Math.ceil(point.amount * (100 - point.price) / 1000);
+      const cost = Math.ceil(point.amount * (1000 - point.price) / 1000);
       
       orders.push({
         price: point.price,
