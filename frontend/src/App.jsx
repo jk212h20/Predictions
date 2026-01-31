@@ -1517,10 +1517,11 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
   const [shares, setShares] = useState(0);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState(null);
+  const [timeframe, setTimeframe] = useState('ALL');
   
   // Polymarket-style state
   const [tradeMode, setTradeMode] = useState('buy');
-  const [orderType, setOrderType] = useState('market');
+  const [orderType, setOrderType] = useState('limit');
   const [hasExpiration, setHasExpiration] = useState(false);
   
   // Calculate best prices from order book
@@ -1530,6 +1531,9 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
   const bestNoPrice = market?.orderBook?.no?.[0]?.price_sats 
     ? Math.round((1000 - market.orderBook.no[0].price_sats) / 10) 
     : null;
+  
+  // Calculate total volume
+  const totalVolume = market?.recentTrades?.reduce((s, t) => s + t.amount_sats, 0) || 0;
 
   // Handle clicking on an order book offer to fill in the trade form
   // offerSide: the side of the existing offer ('yes' or 'no')
