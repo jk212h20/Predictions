@@ -1295,7 +1295,7 @@ app.post('/api/orders', authMiddleware, (req, res) => {
       db.prepare(`
         INSERT INTO bets (id, market_id, yes_user_id, no_user_id, yes_order_id, no_order_id, price_sats, amount_sats)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(betId, market_id, yesUserId, noUserId, yesOrderId, noOrderId, 1000 - tradePrice, matchAmount);
+      `).run(betId, market_id, yesUserId, noUserId, yesOrderId, noOrderId, tradePrice, matchAmount);
       
       // Update matched order
       const newFilled = matchOrder.filled_sats + matchAmount;
@@ -1346,7 +1346,7 @@ app.post('/api/orders', authMiddleware, (req, res) => {
       
       if (yesShares > 0 && noShares > 0) {
         const settleAmount = Math.min(yesShares, noShares);
-        const settlePayout = settleAmount;
+        const settlePayout = settleAmount * 1000;  // Convert shares to sats (1 share = 1000 sats)
         
         let remainingToSettle = settleAmount;
         

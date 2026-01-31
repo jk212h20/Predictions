@@ -8,6 +8,21 @@ import './App.css';
 // Constants
 const SATS_PER_SHARE = 1000;
 
+/*
+ * ==================== PRICE SYSTEM DOCUMENTATION ====================
+ * 
+ * The system uses a 1000-sat share model:
+ * - 1 share = 1000 sats payout if prediction is correct
+ * - price_sats (10-990) = what you pay per share in sats
+ * - price_sats of 500 means 50% probability (pay 500 sats for 1000 sat potential payout)
+ * 
+ * CONVERSIONS:
+ * - Percentage to sats: percentage * 10 (e.g., 50% → 500 sats)
+ * - Sats to percentage: price_sats / 10 (e.g., 500 sats → 50%)
+ * 
+ * The slider UI uses percentages (1-99), backend stores sats (10-990).
+ */
+
 // Format satoshis
 const formatSats = (sats) => {
   if (!sats) return '0';
@@ -1228,7 +1243,8 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
             <h4>YES Orders</h4>
             {market.orderBook.yes.slice(0, 5).map((o, i) => (
               <div key={i} className="ob-row">
-                <span>{o.price_sats}%</span>
+                {/* price_sats is 10-990 (sats), divide by 10 to get percentage */}
+                <span>{Math.round(o.price_sats / 10)}%</span>
                 <span>{formatSats(o.total_sats)} sats</span>
               </div>
             ))}
@@ -1238,7 +1254,8 @@ function EventMarket({ market, user, onLogin, onRefresh }) {
             <h4>NO Orders</h4>
             {market.orderBook.no.slice(0, 5).map((o, i) => (
               <div key={i} className="ob-row">
-                <span>{o.price_sats}%</span>
+                {/* price_sats is 10-990 (sats), divide by 10 to get percentage */}
+                <span>{Math.round(o.price_sats / 10)}%</span>
                 <span>{formatSats(o.total_sats)} sats</span>
               </div>
             ))}
@@ -1501,20 +1518,25 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
   const [toast, setToast] = useState(null);
 
   // Handle clicking on an order book offer to fill in the trade form
-  const handleOfferClick = (offerSide, priceSats, availableShares) => {
+  // offerSide: the side of the existing offer ('yes' or 'no')
+  // offerPriceSats: the YES price in sats (10-990) from the order
+  // availableShares: number of shares available in the order
+  const handleOfferClick = (offerSide, offerPriceSats, availableShares) => {
     const newSide = offerSide === 'yes' ? 'no' : 'yes';
     // Take the opposite side of the offer
     setSide(newSide);
-    // Use the same price (probability)
-    setPrice(priceSats);
+    // Convert sats (10-990) to percentage (1-99) for the slider
+    const pricePercent = Math.round(offerPriceSats / 10);
+    setPrice(pricePercent);
     // Set shares to match what's available
     setShares(availableShares);
     
     // Show toast notification
-    const costPerShare = newSide === 'yes' ? priceSats : (1000 - priceSats);
+    // Cost per share: YES pays offerPriceSats, NO pays (1000 - offerPriceSats)
+    const costPerShare = newSide === 'yes' ? offerPriceSats : (1000 - offerPriceSats);
     const totalCost = Math.ceil(availableShares * SATS_PER_SHARE * costPerShare / 1000);
     setToast({
-      message: `✓ Form filled: ${availableShares} ${newSide.toUpperCase()} @ ${priceSats}%`,
+      message: `✓ Form filled: ${availableShares} ${newSide.toUpperCase()} @ ${pricePercent}%`,
       subtext: `Cost: ${formatSats(totalCost)} sats — Click "Buy" to confirm!`
     });
     
@@ -1670,14 +1692,17 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               </div>
               {market.orderBook?.yes.map((o, i) => {
                 const shares = satsToShares(o.total_sats);
-                const priceSats = o.price_sats * 10; // 40% = 400 sats/share
+                // o.price_sats is already in sats (10-990), no conversion needed
+                const priceSats = o.price_sats;
                 const totalCost = shares * priceSats;
+                // Convert to percentage for display: 500 sats → 50%
+                const pricePercent = Math.round(o.price_sats / 10);
                 return (
                   <div 
                     key={i} 
                     className="ob-row ob-row-clickable"
                     onClick={() => handleOfferClick('yes', o.price_sats, shares)}
-                    title={`Click to buy ${shares} NO shares at ${100 - o.price_sats}%`}
+                    title={`Click to buy ${shares} NO shares at ${100 - pricePercent}%`}
                   >
                     <span className="ob-price">{formatSats(priceSats)}</span>
                     <span className="ob-shares">{shares}</span>
@@ -1704,16 +1729,19 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
               </div>
               {market.orderBook?.no.map((o, i) => {
                 const shares = satsToShares(o.total_sats);
-                const priceSats = (100 - o.price_sats) * 10; // NO price = 100 - YES price
-                const totalCost = shares * priceSats;
+                // o.price_sats is YES price in sats (10-990). NO price = 1000 - YES price
+                const noPriceSats = 1000 - o.price_sats;
+                const totalCost = shares * noPriceSats;
+                // Convert to percentage for display: 500 sats → 50%
+                const yesPricePercent = Math.round(o.price_sats / 10);
                 return (
                   <div 
                     key={i} 
                     className="ob-row ob-row-clickable"
                     onClick={() => handleOfferClick('no', o.price_sats, shares)}
-                    title={`Click to buy ${shares} YES shares at ${o.price_sats}%`}
+                    title={`Click to buy ${shares} YES shares at ${yesPricePercent}%`}
                   >
-                    <span className="ob-price">{formatSats(priceSats)}</span>
+                    <span className="ob-price">{formatSats(noPriceSats)}</span>
                     <span className="ob-shares">{shares}</span>
                     <span className="ob-total">{formatSats(totalCost)}</span>
                     <div className="ob-bar ob-bar-no" style={{ width: `${Math.min(shares * 5, 100)}%` }} />
@@ -1737,7 +1765,8 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
             <h3>Recent Trades</h3>
             {market.recentTrades.map((t, i) => (
               <div key={i} className="trade-row">
-                <span className="trade-price">{formatSats(t.price_sats * 10)} sats/share</span>
+                {/* t.price_sats is already in sats (10-990), no conversion needed */}
+                <span className="trade-price">{formatSats(t.price_sats)} sats/share</span>
                 <span className="trade-shares">{satsToShares(t.amount_sats)} share{satsToShares(t.amount_sats) !== 1 ? 's' : ''}</span>
                 <span className="trade-time">{new Date(t.created_at).toLocaleString()}</span>
               </div>
@@ -2007,7 +2036,8 @@ function PortfolioModal({ user, onClose, onRefresh, onSelectMarket }) {
                               {o.side.toUpperCase()}
                             </span>
                           </td>
-                          <td>{o.price_sats}%</td>
+                          {/* price_sats is in sats (10-990), divide by 10 for percentage */}
+                          <td>{Math.round(o.price_sats / 10)}%</td>
                           <td>{formatSats(o.amount_sats)} sats</td>
                           <td>
                             {formatSats(o.filled_sats)} / {formatSats(o.amount_sats)}
@@ -2060,10 +2090,10 @@ function PortfolioModal({ user, onClose, onRefresh, onSelectMarket }) {
                     </thead>
                     <tbody>
                       {trades.map(t => {
-                        // Calculate actual price in sats/share based on side
+                        // price_sats is already in sats (10-990). NO pays the complement of YES.
                         const priceSatsPerShare = t.user_side === 'yes' 
-                          ? t.price_sats * 10 
-                          : (100 - t.price_sats) * 10;
+                          ? t.price_sats 
+                          : (1000 - t.price_sats);
                         return (
                           <tr key={t.id} className={t.result !== 'pending' ? `trade-${t.result}` : ''}>
                             <td className="date-cell">

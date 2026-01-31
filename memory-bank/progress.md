@@ -1,6 +1,56 @@
 # Progress - Predictions Market Maker Bot
 
-## Latest Update: 2026-01-30 - Integer-Based Trading System
+## Latest Update: 2026-01-30 - CRITICAL BUG FIX: Price Unit Mismatch
+
+### Bug Fixed
+**Problem**: Buy button was taking money but not creating orders or matching trades
+**Root Cause**: Frontend had inconsistent handling of price units after migration from `price_cents` (1-99, percentages) to `price_sats` (10-990, sats per share)
+
+### Issues Fixed in `frontend/src/App.jsx`:
+
+1. **EventMarket order book**: Displayed `o.price_sats%` directly when price_sats is 10-990 (not 1-99)
+   - Fixed: Now displays `Math.round(o.price_sats / 10)%`
+
+2. **handleOfferClick (critical bug)**: Passed `o.price_sats` (sats) to `setPrice()` which expects percentage
+   - Fixed: Now converts `Math.round(offerPriceSats / 10)` before setting slider value
+
+3. **MarketDetail YES order book**: `priceSats = o.price_sats * 10` multiplied already-sats value
+   - Fixed: `priceSats = o.price_sats` (no conversion needed)
+
+4. **MarketDetail NO order book**: `priceSats = (100 - o.price_sats) * 10` used wrong formula
+   - Fixed: `noPriceSats = 1000 - o.price_sats` (NO price is complement in sats)
+
+5. **Recent Trades**: `formatSats(t.price_sats * 10)` multiplied already-sats value
+   - Fixed: `formatSats(t.price_sats)` (no conversion)
+
+6. **Portfolio orders table**: Showed `o.price_sats%` directly
+   - Fixed: `Math.round(o.price_sats / 10)%`
+
+7. **Portfolio trade history**: `t.price_sats * 10` and `(100 - t.price_sats) * 10` wrong formulas
+   - Fixed: `t.price_sats` and `(1000 - t.price_sats)` respectively
+
+### Documentation Added
+Added comprehensive PRICE SYSTEM DOCUMENTATION at top of App.jsx:
+```javascript
+/*
+ * ==================== PRICE SYSTEM DOCUMENTATION ====================
+ * 
+ * The system uses a 1000-sat share model:
+ * - 1 share = 1000 sats payout if prediction is correct
+ * - price_sats (10-990) = what you pay per share in sats
+ * - price_sats of 500 means 50% probability
+ * 
+ * CONVERSIONS:
+ * - Percentage to sats: percentage * 10 (e.g., 50% → 500 sats)
+ * - Sats to percentage: price_sats / 10 (e.g., 500 sats → 50%)
+ * 
+ * The slider UI uses percentages (1-99), backend stores sats (10-990).
+ */
+```
+
+---
+
+## Previous Update: 2026-01-30 - Integer-Based Trading System
 
 ### Latest Changes
 1. **MAJOR REDESIGN: Integer-Based Trading System** - Complete rewrite of order matching to eliminate rounding
