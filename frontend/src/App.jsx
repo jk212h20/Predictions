@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import * as api from './api';
 import BotAdmin from './BotAdmin';
 import UserAdmin from './UserAdmin';
@@ -1617,6 +1618,39 @@ function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
       </div>
       
       <p className="market-description">{market.description}</p>
+
+      {/* Price Chart */}
+      {market.recentTrades && market.recentTrades.length > 1 && (
+        <div className="price-chart">
+          <div className="chart-header">
+            <span className="chart-volume">📊 {formatSats(market.recentTrades.reduce((s,t) => s + t.amount_sats, 0))} Vol.</span>
+            <div className="chart-timeframe">
+              <button className="tf-btn active">ALL</button>
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={market.recentTrades.slice().reverse().map((t, i) => ({
+              time: i,
+              price: Math.round(t.price_sats / 10)
+            }))}>
+              <XAxis dataKey="time" hide />
+              <YAxis domain={[0, 100]} hide />
+              <ReferenceLine y={50} stroke="var(--border-color)" strokeDasharray="3 3" />
+              <Tooltip 
+                formatter={(value) => [`${value}%`, 'Price']}
+                contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)' }}
+              />
+              <Line 
+                type="monotone" 
+                dataKey="price" 
+                stroke="var(--primary-color)" 
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* Share Model Explainer */}
       <div className="share-explainer">
