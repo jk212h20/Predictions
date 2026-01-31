@@ -572,6 +572,61 @@ try {
   console.log('withdrawal_settings table check:', e.message);
 }
 
+// ==================== FIX ORDERS TABLE CONSTRAINT ====================
+// The old schema had CHECK(price_sats >= 1 AND price_sats <= 99) but we need 1-999
+// SQLite doesn't support ALTER TABLE for CHECK constraints, so we recreate the table
+try {
+  // Check if the constraint is wrong (allows only 1-99)
+  const ordersSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='orders'").get();
+  
+  if (ordersSchema && ordersSchema.sql && ordersSchema.sql.includes('price_sats <= 99)')) {
+    console.log('Migrating orders table: fixing price_sats constraint from 1-99 to 1-999...');
+    
+    // Step 1: Create new table with correct schema
+    db.exec(`
+      CREATE TABLE orders_new (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        market_id TEXT NOT NULL,
+        side TEXT NOT NULL CHECK(side IN ('yes', 'no')),
+        price_sats INTEGER NOT NULL CHECK(price_sats >= 1 AND price_sats <= 999),
+        amount_sats INTEGER NOT NULL,
+        filled_sats INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'open' CHECK(status IN ('open', 'partial', 'filled', 'cancelled')),
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (market_id) REFERENCES markets(id)
+      )
+    `);
+    
+    // Step 2: Copy all data (scaling existing prices ×10 if they're in old range)
+    db.exec(`
+      INSERT INTO orders_new (id, user_id, market_id, side, price_sats, amount_sats, filled_sats, status, created_at, updated_at)
+      SELECT id, user_id, market_id, side, 
+             CASE WHEN price_sats < 100 THEN price_sats * 10 ELSE price_sats END,
+             amount_sats, filled_sats, status, created_at, updated_at
+      FROM orders
+    `);
+    
+    // Step 3: Drop old table and indexes
+    db.exec('DROP INDEX IF EXISTS idx_orders_market');
+    db.exec('DROP INDEX IF EXISTS idx_orders_user');
+    db.exec('DROP TABLE orders');
+    
+    // Step 4: Rename new table
+    db.exec('ALTER TABLE orders_new RENAME TO orders');
+    
+    // Step 5: Recreate indexes
+    db.exec('CREATE INDEX idx_orders_market ON orders(market_id, status)');
+    db.exec('CREATE INDEX idx_orders_user ON orders(user_id, status)');
+    
+    console.log('Orders table migration complete: price_sats constraint now 1-999');
+  }
+} catch (e) {
+  console.log('Orders constraint migration check:', e.message);
+}
+
 // Create LNURL auth challenges table (for tracking login attempts)
 db.exec(`
   CREATE TABLE IF NOT EXISTS lnurl_auth_challenges (
