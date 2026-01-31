@@ -2345,10 +2345,11 @@ function placeOrderWithMatching(userId, marketId, side, priceSats, amountSats) {
     const yesUserId = side === 'yes' ? userId : currentMatch.user_id;
     const noUserId = side === 'no' ? userId : currentMatch.user_id;
     
+    // Store the resting order's price directly (the YES price in sats)
     db.prepare(`
       INSERT INTO bets (id, market_id, yes_user_id, no_user_id, price_sats, amount_sats)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(betId, marketId, yesUserId, noUserId, 100 - tradePrice, matchAmount);
+    `).run(betId, marketId, yesUserId, noUserId, tradePrice, matchAmount);
     
     // Update matched order
     const newFilled = currentMatch.filled_sats + matchAmount;
