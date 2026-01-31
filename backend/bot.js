@@ -1290,7 +1290,7 @@ function calculateExposureWithAnnihilation() {
   `).all(config.bot_user_id);
   
   // Get NO exposure per market (bot is on NO side)
-  // Cost paid = amount_sats × (100 - price) / 100 (what NO side paid)
+  // Cost paid = amount_sats × (1000 - price) / 1000 (what NO side paid)
   const noExposureByMarket = db.prepare(`
     SELECT 
       market_id,
@@ -3233,7 +3233,7 @@ function calculateAutoMatchesForDeployment(marketPreviews) {
         
         const matchAmount = Math.min(remainingAmount, available);
         
-        // Calculate cost (NO pays 100 - trade_price where trade_price = YES order's price)
+        // Calculate cost (NO pays 1000 - trade_price where trade_price = YES order's price)
         const tradePrice = yesOrder.price_sats;
         const matchCost = Math.ceil(matchAmount * (1000 - tradePrice) / 1000);
         
