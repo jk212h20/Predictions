@@ -2295,33 +2295,34 @@ function placeOrderWithMatching(userId, marketId, side, priceSats, amountSats) {
   const matchedBets = [];
   
   /**
-   * MATCHING LOGIC (price_sats = YES probability 1-99):
-   * - YES @ X matches NO where NO.price_sats <= X (ascending order, best first)
-   * - NO @ Y matches YES where YES.price_sats >= Y (descending order, best first)
+   * MATCHING LOGIC (price_sats = cost in sats, 10-990):
+   * Matching condition: YES_price + NO_price >= 1000
    * 
-   * Example: YES @ 60 matches NO @ 40 because: YES pays 60%, NO pays 40%, total = 100%
-   *          YES.price_sats=60, NO.price_sats=40, 60 >= 40 ✓
+   * - YES @ Y matches NO orders where NO.price >= (1000 - Y)
+   * - NO @ N matches YES orders where YES.price >= (1000 - N)
+   * 
+   * Example: YES @ 600 matches NO @ 400+ because: 600 + 400 = 1000 ✓
    */
   let potentialMatches;
   
   if (side === 'yes') {
-    // YES buyer: find NO orders with price_sats <= our price
-    // Best matches are LOWEST price_sats first (they paid less, better deal for us)
+    // YES@Y matches NO orders where NO.price >= (1000 - Y)
+    const minNoPrice = 1000 - priceSats;
     potentialMatches = db.prepare(`
       SELECT * FROM orders
       WHERE market_id = ? AND side = 'no' AND status IN ('open', 'partial')
-      AND price_sats <= ?
-      ORDER BY price_sats ASC, created_at ASC
-    `).all(marketId, priceSats);
+      AND price_sats >= ?
+      ORDER BY price_sats DESC, created_at ASC
+    `).all(marketId, minNoPrice);
   } else {
-    // NO buyer: find YES orders with price_sats >= our price
-    // Best matches are HIGHEST price_sats first (they paid more, better deal for us)
+    // NO@N matches YES orders where YES.price >= (1000 - N)
+    const minYesPrice = 1000 - priceSats;
     potentialMatches = db.prepare(`
       SELECT * FROM orders
       WHERE market_id = ? AND side = 'yes' AND status IN ('open', 'partial')
       AND price_sats >= ?
       ORDER BY price_sats DESC, created_at ASC
-    `).all(marketId, priceSats);
+    `).all(marketId, minYesPrice);
   }
   
   for (const matchOrder of potentialMatches) {
