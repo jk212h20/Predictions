@@ -1513,9 +1513,22 @@ function WinnerBrowser({ grandmasters, onSelectGM }) {
 function MarketDetail({ market, user, onBack, onLogin, onRefresh }) {
   const [side, setSide] = useState('yes');
   const [price, setPrice] = useState(50);
-  const [shares, setShares] = useState(10);
+  const [shares, setShares] = useState(0);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState(null);
+  
+  // Polymarket-style state
+  const [tradeMode, setTradeMode] = useState('buy');
+  const [orderType, setOrderType] = useState('market');
+  const [hasExpiration, setHasExpiration] = useState(false);
+  
+  // Calculate best prices from order book
+  const bestYesPrice = market?.orderBook?.yes?.[0]?.price_sats 
+    ? Math.round(market.orderBook.yes[0].price_sats / 10) 
+    : null;
+  const bestNoPrice = market?.orderBook?.no?.[0]?.price_sats 
+    ? Math.round((1000 - market.orderBook.no[0].price_sats) / 10) 
+    : null;
 
   // Handle clicking on an order book offer to fill in the trade form
   // offerSide: the side of the existing offer ('yes' or 'no')
