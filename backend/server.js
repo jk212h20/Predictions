@@ -9,6 +9,7 @@ const { OAuth2Client } = require('google-auth-library');
 const db = require('./database');
 const lightning = require('./lightning');
 const bot = require('./bot');
+const matchingEngine = require('./matching-engine');
 const { seed } = require('./seed');
 const { seed: seedPlayers } = require('./seed-players');
 
@@ -1166,286 +1167,44 @@ app.get('/api/markets/:id', (req, res) => {
 app.post('/api/orders', authMiddleware, (req, res) => {
   const { market_id, side, price_sats, amount_sats } = req.body;
   
-  // Validation (outside transaction - read-only checks)
-  if (!['yes', 'no'].includes(side)) {
-    return res.status(400).json({ error: 'Side must be yes or no' });
-  }
-  if (price_sats < 1 || price_sats > 999) {
-    return res.status(400).json({ error: 'Probability must be between 1 and 999 sats' });
-  }
-  if (amount_sats < 100) {
-    return res.status(400).json({ error: 'Minimum order is 100 sats' });
-  }
+  // Use the new clean matching engine
+  const result = matchingEngine.placeOrder(
+    db,
+    req.user.id,
+    market_id,
+    side,
+    price_sats,
+    amount_sats
+  );
   
-  // Check market exists and is open
-  const market = db.prepare('SELECT * FROM markets WHERE id = ?').get(market_id);
-  if (!market || market.status !== 'open') {
-    return res.status(400).json({ error: 'Market not available for trading' });
-  }
-  
-  // Calculate cost
-  const cost = side === 'yes' 
-    ? Math.ceil(amount_sats * price_sats / 1000)
-    : Math.ceil(amount_sats * (1000 - price_sats) / 1000);
-  
-  // Pre-check balance (will verify again inside transaction)
-  const userCheck = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
-  if (userCheck.balance_sats < cost) {
-    return res.status(400).json({ error: 'Insufficient balance', required: cost, available: userCheck.balance_sats });
+  if (!result.success) {
+    // Determine appropriate error code
+    if (result.error.includes('Insufficient balance')) {
+      return res.status(400).json({ error: result.error });
+    }
+    if (result.error.includes('not found') || result.error.includes('not open')) {
+      return res.status(400).json({ error: result.error });
+    }
+    if (result.error.includes('must be')) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.status(500).json({ error: result.error });
   }
   
-  // Generate IDs outside transaction (UUID generation doesn't need to be in transaction)
-  const orderId = uuidv4();
-  
-  /**
-   * ATOMIC ORDER MATCHING TRANSACTION
-   * 
-   * This transaction ensures:
-   * 1. Balance check and deduction are atomic
-   * 2. Order matching uses current (not stale) order state
-   * 3. Bot pullback runs INSIDE the transaction, before other trades can read
-   * 4. Auto-settle runs in the same transaction
-   * 5. If anything fails, everything rolls back
-   * 
-   * SQLite's exclusive transaction lock means concurrent requests will serialize.
-   */
-  const executeOrder = db.transaction(() => {
-    // Step 1: Verify and deduct balance (re-check inside transaction)
-    const user = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
-    if (user.balance_sats < cost) {
-      throw new Error(`INSUFFICIENT_BALANCE:${cost}:${user.balance_sats}`);
-    }
-    
-    const newBalance = user.balance_sats - cost;
-    db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(newBalance, req.user.id);
-    
-    // Step 2: Find and match with existing orders
-    let remainingAmount = amount_sats;
-    const matchedBets = [];
-    
-    const oppositeSide = side === 'yes' ? 'no' : 'yes';
-    
-    /*
-     * MATCHING LOGIC:
-     * - YES @ X% pays X% per share, needs NO buyer to pay (100-X)% or more
-     * - NO @ Y% pays (100-Y)% per share, needs YES buyer to pay Y% or more
-     * 
-     * For YES @ X to match NO @ Y: X + (100-Y) >= 100, i.e., X >= Y
-     * For NO @ Y to match YES @ X: (100-Y) + X >= 100, i.e., X >= Y
-     * 
-     * So:
-     * - YES orders look for NO orders where NO.price_sats <= YES.price_sats
-     * - NO orders look for YES orders where YES.price_sats >= NO.price_sats
-     */
-    
-    // Get potentially matching orders (will re-verify each one)
-    let potentialMatches;
-    if (side === 'yes') {
-      // YES buyer: find NO orders with price_sats <= our price
-      // Best matches are LOWEST price_sats first (they paid more, better deal for us)
-      potentialMatches = db.prepare(`
-        SELECT * FROM orders
-        WHERE market_id = ? AND side = 'no' AND status IN ('open', 'partial')
-        AND price_sats <= ?
-        ORDER BY price_sats ASC, created_at ASC
-      `).all(market_id, price_sats);
-    } else {
-      // NO buyer: find YES orders with price_sats >= our price
-      // Best matches are HIGHEST price_sats first (they paid more, better deal for us)
-      potentialMatches = db.prepare(`
-        SELECT * FROM orders
-        WHERE market_id = ? AND side = 'yes' AND status IN ('open', 'partial')
-        AND price_sats >= ?
-        ORDER BY price_sats DESC, created_at ASC
-      `).all(market_id, price_sats);
-    }
-    
-    let matchedBotOrders = false;
-    
-    for (const matchOrderSnapshot of potentialMatches) {
-      if (remainingAmount <= 0) break;
-      
-      // CRITICAL: Re-query this order to get current state
-      // Another transaction may have partially filled it
-      const matchOrder = db.prepare('SELECT * FROM orders WHERE id = ? AND status IN (\'open\', \'partial\')')
-        .get(matchOrderSnapshot.id);
-      
-      // Order may have been filled by another transaction
-      if (!matchOrder) continue;
-      
-      const matchAvailable = matchOrder.amount_sats - matchOrder.filled_sats;
-      if (matchAvailable <= 0) continue;
-      
-      const matchAmount = Math.min(remainingAmount, matchAvailable);
-      const tradePrice = matchOrder.price_sats;
-      
-      // Check if this is a bot order
-      const isBotMatch = bot.isBotUser(matchOrder.user_id);
-      if (isBotMatch) {
-        matchedBotOrders = true;
-      }
-      
-      // Create bet
-      const betId = uuidv4();
-      const yesUserId = side === 'yes' ? req.user.id : matchOrder.user_id;
-      const noUserId = side === 'no' ? req.user.id : matchOrder.user_id;
-      const yesOrderId = side === 'yes' ? orderId : matchOrder.id;
-      const noOrderId = side === 'no' ? orderId : matchOrder.id;
-      
-      db.prepare(`
-        INSERT INTO bets (id, market_id, yes_user_id, no_user_id, yes_order_id, no_order_id, price_sats, amount_sats)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(betId, market_id, yesUserId, noUserId, yesOrderId, noOrderId, tradePrice, matchAmount);
-      
-      // Update matched order
-      const newFilled = matchOrder.filled_sats + matchAmount;
-      const newStatus = newFilled >= matchOrder.amount_sats ? 'filled' : 'partial';
-      db.prepare('UPDATE orders SET filled_sats = ?, status = ? WHERE id = ?')
-        .run(newFilled, newStatus, matchOrder.id);
-      
-      remainingAmount -= matchAmount;
-      matchedBets.push({ betId, amount: matchAmount, price: 100 - tradePrice, isBotOrder: isBotMatch });
-    }
-    
-    // Step 3: BOT PULLBACK - INSIDE transaction, before other trades can proceed
-    // This ensures the next concurrent trade sees reduced liquidity
-    let pullbackResult = null;
-    if (matchedBotOrders) {
-      pullbackResult = bot.atomicPullback(amount_sats - remainingAmount, market_id);
-    }
-    
-    // Step 4: Create order for remaining amount
-    const orderStatus = remainingAmount === 0 ? 'filled' : 
-                        remainingAmount < amount_sats ? 'partial' : 'open';
-    
-    db.prepare(`
-      INSERT INTO orders (id, user_id, market_id, side, price_sats, amount_sats, filled_sats, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(orderId, req.user.id, market_id, side, price_sats, amount_sats, amount_sats - remainingAmount, orderStatus);
-    
-    // Record transaction
-    db.prepare(`
-      INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, reference_id, status)
-      VALUES (?, ?, 'order_placed', ?, ?, ?, 'completed')
-    `).run(uuidv4(), req.user.id, -cost, newBalance, orderId);
-    
-    // Step 5: AUTO-SETTLE - Check if user now has opposing positions
-    let autoSettled = null;
-    if (matchedBets.length > 0) {
-      const yesShares = db.prepare(`
-        SELECT COALESCE(SUM(amount_sats), 0) as total
-        FROM bets 
-        WHERE market_id = ? AND yes_user_id = ? AND status = 'active'
-      `).get(market_id, req.user.id).total;
-      
-      const noShares = db.prepare(`
-        SELECT COALESCE(SUM(amount_sats), 0) as total
-        FROM bets 
-        WHERE market_id = ? AND no_user_id = ? AND status = 'active'
-      `).get(market_id, req.user.id).total;
-      
-      if (yesShares > 0 && noShares > 0) {
-        const settleAmount = Math.min(yesShares, noShares);
-        const settlePayout = settleAmount * 1000;  // Convert shares to sats (1 share = 1000 sats)
-        
-        let remainingToSettle = settleAmount;
-        
-        // Settle YES side bets
-        const yesBets = db.prepare(`
-          SELECT * FROM bets 
-          WHERE market_id = ? AND yes_user_id = ? AND status = 'active'
-          ORDER BY created_at ASC
-        `).all(market_id, req.user.id);
-        
-        for (const bet of yesBets) {
-          if (remainingToSettle <= 0) break;
-          const settleFromBet = Math.min(bet.amount_sats, remainingToSettle);
-          if (settleFromBet === bet.amount_sats) {
-            db.prepare(`UPDATE bets SET status = 'settled', settled_at = datetime('now'), winner_user_id = ? WHERE id = ?`)
-              .run(req.user.id, bet.id);
-          }
-          remainingToSettle -= settleFromBet;
-        }
-        
-        // Settle NO side bets
-        remainingToSettle = settleAmount;
-        const noBets = db.prepare(`
-          SELECT * FROM bets 
-          WHERE market_id = ? AND no_user_id = ? AND status = 'active'
-          ORDER BY created_at ASC
-        `).all(market_id, req.user.id);
-        
-        for (const bet of noBets) {
-          if (remainingToSettle <= 0) break;
-          const settleFromBet = Math.min(bet.amount_sats, remainingToSettle);
-          if (settleFromBet === bet.amount_sats) {
-            db.prepare(`UPDATE bets SET status = 'settled', settled_at = datetime('now'), winner_user_id = ? WHERE id = ?`)
-              .run(req.user.id, bet.id);
-          }
-          remainingToSettle -= settleFromBet;
-        }
-        
-        // Credit user the settled amount
-        const currentUser = db.prepare('SELECT balance_sats FROM users WHERE id = ?').get(req.user.id);
-        const balanceAfterSettle = currentUser.balance_sats + settlePayout;
-        db.prepare('UPDATE users SET balance_sats = ? WHERE id = ?').run(balanceAfterSettle, req.user.id);
-        
-        // Record the auto-settle transaction
-        db.prepare(`
-          INSERT INTO transactions (id, user_id, type, amount_sats, balance_after, reference_id, status)
-          VALUES (?, ?, 'bet_won', ?, ?, ?, 'completed')
-        `).run(uuidv4(), req.user.id, settlePayout, balanceAfterSettle, 'auto-settle-' + market_id);
-        
-        autoSettled = {
-          pairs_settled: settleAmount / 1000,
-          payout: settlePayout,
-          new_balance: balanceAfterSettle
-        };
-      }
-    }
-    
-    // Return results from transaction
-    return {
-      orderId,
-      orderStatus,
-      filled: amount_sats - remainingAmount,
-      remaining: remainingAmount,
-      cost,
-      newBalance: autoSettled ? autoSettled.new_balance : newBalance,
-      matchedBets,
-      autoSettled,
-      pullbackResult
-    };
+  // Return result in the format the frontend expects
+  res.json({
+    order_id: result.orderId,
+    status: result.orderStatus,
+    filled: result.filled,
+    remaining: result.remaining,
+    cost: result.cost,
+    new_balance: result.newBalance,
+    matched_bets: result.betsCreated.map(b => ({
+      betId: b.betId,
+      amount: b.shares * 1000,
+      price: b.priceSats
+    }))
   });
-  
-  // Execute the atomic transaction
-  try {
-    const result = executeOrder();
-    
-    res.json({
-      order_id: result.orderId,
-      status: result.orderStatus,
-      filled: result.filled,
-      remaining: result.remaining,
-      cost: result.cost,
-      new_balance: result.newBalance,
-      matched_bets: result.matchedBets,
-      auto_settled: result.autoSettled
-    });
-  } catch (err) {
-    // Handle specific errors
-    if (err.message.startsWith('INSUFFICIENT_BALANCE:')) {
-      const [, required, available] = err.message.split(':');
-      return res.status(400).json({ 
-        error: 'Insufficient balance', 
-        required: parseInt(required), 
-        available: parseInt(available) 
-      });
-    }
-    
-    console.error('Order execution failed:', err);
-    return res.status(500).json({ error: 'Order execution failed', message: err.message });
-  }
 });
 
 app.delete('/api/orders/:id', authMiddleware, (req, res) => {
